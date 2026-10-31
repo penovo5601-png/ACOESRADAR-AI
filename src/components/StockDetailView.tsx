@@ -5,6 +5,7 @@ import { StockFullAnalysis } from "@/lib/stockApi";
 import { StockChart } from "./StockChart";
 import { StockNews } from "./StockNews";
 import { ScenarioPanel } from "./ScenarioPanel";
+import { FundamentalsPanel } from "./FundamentalsPanel";
 import {
   TrendingUp,
   TrendingDown,
@@ -172,6 +173,28 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
               );
             })()}
           </div>
+        </div>
+      </div>
+
+      {stock.dataNotes.length > 0 && (
+        <div className={`rounded-2xl border p-3 text-xs ${stock.candleSource === "sintética" ? "border-rose-800 bg-rose-950/40 text-rose-200" : "border-amber-800 bg-amber-950/30 text-amber-200"}`}>
+          {stock.dataNotes.map((n, i) => <div key={i}>{n}</div>)}
+        </div>
+      )}
+
+      {/* Rentabilidade por período (sempre visível) */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rentabilidade histórica · {stock.fundamentalReport.behaviour.text.split(".")[0]}.</span>
+          <span className="text-[11px] text-slate-400">Fundamentais: <strong className={stock.fundamentalReport.overallScore >= 65 ? "text-emerald-400" : stock.fundamentalReport.overallScore >= 45 ? "text-amber-400" : "text-rose-400"}>{stock.fundamentalReport.overallGrade} ({stock.fundamentalReport.overallScore}/100)</strong> · Valor intrínseco: <strong className="text-white">{stock.fundamentalReport.intrinsic.status}</strong> · Velas: {stock.candleSource}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+          {stock.fundamentalReport.performance.map((p) => (
+            <div key={p.label} className="rounded-lg bg-slate-950 p-2 text-center border border-slate-800">
+              <div className="text-[10px] text-slate-400">{p.label}</div>
+              <div className={`text-sm font-black ${p.pct == null ? "text-slate-600" : p.pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{p.pct == null ? "—" : `${p.pct > 0 ? "+" : ""}${p.pct.toFixed(1)}%`}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -408,7 +431,7 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
               : "border-transparent text-slate-400 hover:text-white"
           }`}
         >
-          Valuation Fundamental &amp; Múltiplos
+          Fundamentais: Rentabilidade · Crescimento · Balanço · Valor Intrínseco
         </button>
       </div>
 
@@ -613,6 +636,7 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
       {/* TAB 2: FUNDAMENTAL VALUATION */}
       {activeTab === "fundamental" && (
         <div className="space-y-4">
+          <FundamentalsPanel r={stock.fundamentalReport} price={stock.currentPrice} currency={stock.currency} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <span className="text-xs text-slate-400">Múltiplo P/E (Preço / Lucro)</span>

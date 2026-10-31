@@ -2,6 +2,9 @@ import { PricePoint, TechnicalAnalysisResult, FundamentalData, calculateTechnica
 import { GLOBAL_STOCKS_DIRECTORY, StockDirectoryItem } from "@/data/globalStocks";
 import { fetchStockNews, NewsSentimentSummary } from "./news";
 import { runScenarioEngine, ScenarioResult } from "./scenarios";
+import { getCandles } from "./candles";
+import { fetchTradingViewFundamentals } from "./tradingview";
+import { buildFundamentalReport, FundamentalReport } from "./fundamentals";
 
 export interface StockFullAnalysis {
   symbol: string;
@@ -28,6 +31,9 @@ export interface StockFullAnalysis {
   expectation: StockExpectationVerdict;
   news: NewsSentimentSummary;
   scenario: ScenarioResult;
+  fundamentalReport: FundamentalReport;
+  candleSource: string;
+  dataNotes: string[];
   lastUpdated: string;
 }
 
@@ -47,63 +53,27 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
   let metaHigh52 = 0;
   let metaLow52 = 0;
 
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSymbol)}?interval=1d&range=2y`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Accept": "*/*"
-      },
-      next: { revalidate: 60 } // cache for 1 minute
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const chartResult = data?.chart?.result?.[0];
-      if (chartResult) {
-        const meta = chartResult.meta || {};
-        metaPrice = meta.regularMarketPrice || 0;
-        metaCurrency = meta.currency || metaCurrency;
-        metaExchange = meta.fullExchangeName || meta.exchangeName || metaExchange;
-        if (meta.shortName && !dirMatch) metaName = meta.shortName;
-        metaHigh52 = meta.fiftyTwoWeekHigh || 0;
-        metaLow52 = meta.fiftyTwoWeekLow || 0;
-
-        const timestamps: number[] = chartResult.timestamp || [];
-        const quote = chartResult.indicators?.quote?.[0] || {};
-        const opens = quote.open || [];
-        const highs = quote.high || [];
-        const lows = quote.low || [];
-        const closes = quote.close || [];
-        const volumes = quote.volume || [];
-
-        for (let i = 0; i < timestamps.length; i++) {
-          const c = closes[i];
-          if (c !== null && c !== undefined && !isNaN(c)) {
-            const dateStr = new Date(timestamps[i] * 1000).toISOString().split("T")[0];
-            const o = opens[i] ?? c;
-            const h = highs[i] ?? Math.max(o, c);
-            const l = lows[i] ?? Math.min(o, c);
-            const v = volumes[i] ?? 100000;
-            history.push({
-              date: dateStr,
-              open: Number(o.toFixed(2)),
-              high: Number(h.toFixed(2)),
-              low: Number(l.toFixed(2)),
-              close: Number(c.toFixed(2)),
-              volume: Math.round(v)
-            });
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Error fetching live stock quote from Yahoo:", err);
+  const [cr, tv] = await Promise.all([getCandles(cleanSymbol, "2y"), fetchTradingViewFundamentals(cleanSymbol)]);
+  const dataNotes: string[] = [...cr.notes];
+  if (cr.meta) {
+    metaPrice = cr.meta.regularMarketPrice || 0;
+    metaCurrency = cr.meta.currency || (tv?.currency as string) || metaCurrency;
+    metaExchange = cr.meta.exchangeName || metaExchange;
+    if (!dirMatch && (cr.meta.longName || cr.meta.shortName)) metaName = (cr.meta.longName || cr.meta.shortName) as string;
+    metaHigh52 = cr.meta.fiftyTwoWeekHigh || 0;
+    metaLow52 = cr.meta.fiftyTwoWeekLow || 0;
   }
+  if (!dirMatch && tv?.description) metaName = String(tv.description);
+  if (tv?.currency && !cr.meta?.currency) metaCurrency = String(tv.currency);
+  if (!metaPrice && typeof tv?.close === "number") metaPrice = tv.close as number;
+  history = cr.candles.map(c => ({ date: new Date(c.t).toISOString().split("T")[0], open: Number(c.o.toFixed(4)), high: Number(c.h.toFixed(4)), low: Number(c.l.toFixed(4)), close: Number(c.c.toFixed(4)), volume: Math.round(c.v || 0) }));
 
-  // Fallback synthetic realistic price history if API is rate limited or offline
+  // Último recurso (todos os fornecedores em baixo): série sintética claramente sinalizada
+  let syntheticHistory = false;
   if (history.length < 15) {
     history = generateFallbackHistory(cleanSymbol, metaPrice || 85.5);
+    syntheticHistory = true;
+    dataNotes.push("⚠️ Nenhum fornecedor de velas respondeu (Yahoo, WSJ, Nasdaq). A série apresentada é SINTÉTICA e o veredito é meramente indicativo — tenta novamente dentro de minutos.");
   }
 
   const technical = calculateTechnicalAnalysis(history);
@@ -111,8 +81,11 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
   if (metaLow52 > 0) technical.low52Week = metaLow52;
   if (metaPrice > 0) technical.currentPrice = Number(metaPrice.toFixed(2));
 
-  // Build Fundamental Data
-  const fundamental = generateFundamentalData(cleanSymbol, technical.currentPrice, dirMatch?.sector);
+  // Fundamentais reais (TradingView) → relatório com 6 pilares + valor intrínseco
+  const fundamentalReport = buildFundamentalReport(tv, technical.currentPrice, cr.candles.map(c => ({ t: c.t, c: c.c })));
+  const fundamental = fundamentalReport.available
+    ? fundamentalFromReport(fundamentalReport)
+    : generateFundamentalData(cleanSymbol, technical.currentPrice, dirMatch?.sector);
 
   // Notícias associadas + sentimento
   const resolvedName = dirMatch?.name || metaName || cleanSymbol;
@@ -125,13 +98,13 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
 
   // Motor de cenários + validação (Monte Carlo, backtest walk-forward, checklist)
   const scenario = runScenarioEngine({
-    candles: history.map(h => ({ o: h.open, h: h.high, l: h.low, c: h.close, v: h.volume, t: h.date })),
+    candles: syntheticHistory ? [] : history.map(h => ({ o: h.open, h: h.high, l: h.low, c: h.close, v: h.volume, t: h.date })),
     currentPrice: technical.currentPrice,
     atr: technical.atr14,
     support: technical.supportLevel,
     resistance: technical.resistanceLevel,
     technicalBias: (technical.scoreTecnico - 50) * 2,
-    fundamentalBias: (fundamental.scoreFundamental - 50) * 2,
+    fundamentalBias: fundamentalReport.available ? fundamentalReport.bias : (fundamental.scoreFundamental - 50) * 2,
     newsBias: news.freshCount > 0 ? news.score : 0,
     newsFreshCount: news.freshCount,
     bullishSignals: technical.signalsBullish,
@@ -156,8 +129,8 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
     currency: metaCurrency,
     market: dirMatch?.market || detectMarketByExchange(metaExchange, cleanSymbol),
     country: dirMatch?.country || detectCountry(cleanSymbol, metaCurrency),
-    sector: dirMatch?.sector || "Ações e Indústria",
-    industry: dirMatch?.industry || "Corporativo / Mercado de Capitais",
+    sector: dirMatch?.sector || fundamentalReport.sector || "Ações e Indústria",
+    industry: dirMatch?.industry || fundamentalReport.industry || "Corporativo / Mercado de Capitais",
     description: dirMatch?.description || `Ação cotada no mercado ${metaExchange}. Acompanhamento técnico e fundamental com modelo preditivo de expectativas.`,
     currentPrice: technical.currentPrice,
     change: technical.change,
@@ -174,6 +147,9 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
     expectation,
     news,
     scenario,
+    fundamentalReport,
+    candleSource: syntheticHistory ? "sintética" : cr.source,
+    dataNotes,
     lastUpdated: new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   };
 }
@@ -254,6 +230,23 @@ function detectCountry(symbol: string, currency: string): string {
   if (sym.endsWith(".TO")) return "Canadá";
   if (currency === "EUR") return "Zona Euro";
   return "Estados Unidos";
+}
+
+function fundamentalFromReport(r: FundamentalReport): FundamentalData {
+  const pe = r.valuation.items.find(i => i.label.startsWith("P/E"))?.raw ?? undefined;
+  const pb = r.valuation.items.find(i => i.label.startsWith("P/B"))?.raw ?? undefined;
+  const dy = r.dividends.items.find(i => i.label === "Dividend yield")?.raw ?? undefined;
+  const roe = r.profitability.items.find(i => i.label.startsWith("ROE"))?.raw ?? undefined;
+  const de = r.balance.items.find(i => i.label.startsWith("Dívida / Capital"))?.raw ?? undefined;
+  const nm = r.profitability.items.find(i => i.label === "Margem líquida")?.raw ?? undefined;
+  const evE = r.valuation.items.find(i => i.label.startsWith("EV / EBITDA"))?.raw ?? undefined;
+  const status: FundamentalData["valuationStatus"] = r.intrinsic.status === "Subavaliada" ? "Subavaliada (Grande Desconto)" : r.intrinsic.status === "Sobreavaliada" ? "Sobreavaliada (Risco Elevado)" : "Preço Justo";
+  return {
+    peRatio: pe ?? undefined, forwardPE: pe != null ? Number((pe * 0.9).toFixed(1)) : undefined, priceToBook: pb ?? undefined, dividendYield: dy ?? 0,
+    marketCap: r.marketCap ?? undefined, enterpriseToEbitda: evE ?? undefined, debtToEquity: de ?? undefined, returnOnEquity: roe ?? undefined, profitMargin: nm ?? undefined,
+    grahamValue: r.intrinsic.graham ?? undefined, dcfFairValue: r.intrinsic.average ?? r.intrinsic.dcf ?? undefined,
+    valuationStatus: status, scoreFundamental: r.overallScore,
+  };
 }
 
 function generateFundamentalData(symbol: string, currentPrice: number, sector: string = ""): FundamentalData {
