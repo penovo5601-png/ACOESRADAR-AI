@@ -1,5 +1,6 @@
 import { PricePoint, TechnicalAnalysisResult, FundamentalData, calculateTechnicalAnalysis, evaluateStockExpectation, StockExpectationVerdict } from "./indicators";
 import { GLOBAL_STOCKS_DIRECTORY, StockDirectoryItem } from "@/data/globalStocks";
+import { fetchStockNews, NewsSentimentSummary } from "./news";
 
 export interface StockFullAnalysis {
   symbol: string;
@@ -24,6 +25,7 @@ export interface StockFullAnalysis {
   technical: TechnicalAnalysisResult;
   fundamental: FundamentalData;
   expectation: StockExpectationVerdict;
+  news: NewsSentimentSummary;
   lastUpdated: string;
 }
 
@@ -110,8 +112,17 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
   // Build Fundamental Data
   const fundamental = generateFundamentalData(cleanSymbol, technical.currentPrice, dirMatch?.sector);
 
-  // Evaluate Expectation (Sobe ou Desce)
-  const expectation = evaluateStockExpectation(technical, fundamental, cleanSymbol);
+  // Notícias associadas + sentimento
+  const resolvedName = dirMatch?.name || metaName || cleanSymbol;
+  let news: NewsSentimentSummary = { items: [], positive: 0, negative: 0, neutral: 0, score: 0, label: "Fluxo Noticioso Neutro", scoreImpact: 0 };
+  try {
+    news = await fetchStockNews(cleanSymbol, resolvedName);
+  } catch (err) {
+    console.warn("News fetch failed:", err);
+  }
+
+  // Evaluate Expectation (Sobe ou Desce) — técnico + fundamental + notícias
+  const expectation = evaluateStockExpectation(technical, fundamental, cleanSymbol, news);
 
   const lastPoint = history[history.length - 1];
 
@@ -138,6 +149,7 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
     technical,
     fundamental,
     expectation,
+    news,
     lastUpdated: new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   };
 }

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { StockFullAnalysis } from "@/lib/stockApi";
 import { StockChart } from "./StockChart";
+import { StockNews } from "./StockNews";
 import {
   TrendingUp,
   TrendingDown,
@@ -228,6 +229,19 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
           </div>
         </div>
 
+        {/* Confluência de indicadores */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/60 px-4 py-3 text-xs">
+          <span className="font-semibold text-slate-300">
+            Confluência de {technical.signalsTotal} indicadores:
+            <span className="ml-2 text-emerald-400 font-black">▲ {technical.signalsBullish} a favor da subida</span>
+            <span className="mx-2 text-slate-600">|</span>
+            <span className="text-rose-400 font-black">▼ {technical.signalsBearish} a favor da queda</span>
+          </span>
+          <span className={`font-bold ${stock.news.scoreImpact > 0 ? "text-emerald-400" : stock.news.scoreImpact < 0 ? "text-rose-400" : "text-slate-400"}`}>
+            Notícias: {stock.news.label} ({stock.news.scoreImpact > 0 ? "+" : ""}{stock.news.scoreImpact} pts)
+          </span>
+        </div>
+
         {/* Scorecard: Technical vs Fundamental vs Consolidated */}
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-4">
@@ -265,7 +279,7 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
               {expectation.overallScore}<span className="text-sm text-slate-400">/100</span>
             </div>
             <p className="mt-1 text-[11px] text-slate-400">
-              Ponderação 60% Técnico + 40% Fundamental
+              60% Técnico + 40% Fundamental + Sentimento de Notícias
             </p>
           </div>
         </div>
@@ -363,6 +377,11 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
       {/* ======================================================== */}
       <StockChart history={stock.history} symbol={stock.symbol} currency={stock.currency} />
 
+      {/* ======================================================== */}
+      {/* NOTÍCIAS ASSOCIADAS À AÇÃO                               */}
+      {/* ======================================================== */}
+      <StockNews news={stock.news} symbol={stock.symbol} />
+
       {/* Navigation tabs for Technical vs Fundamental */}
       <div className="flex border-b border-slate-800">
         <button
@@ -373,7 +392,7 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
               : "border-transparent text-slate-400 hover:text-white"
           }`}
         >
-          Matriz de Indicadores Técnicos
+          Matriz de 15+ Indicadores Técnicos
         </button>
         <button
           onClick={() => setActiveTab("fundamental")}
@@ -481,6 +500,74 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
             <span className="mt-2 block rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
               {technical.bollingerBands.position}
             </span>
+          </div>
+
+
+          {/* ADX / DMI */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>ADX / DMI (14)</span><Activity className="h-4 w-4 text-cyan-400" /></div>
+            <div className="mt-2 text-2xl font-black text-white">{technical.adx.value}</div>
+            <div className="mt-1 text-[11px] text-slate-300">+DI {technical.adx.plusDI} | -DI {technical.adx.minusDI}</div>
+            <span className={`mt-2 inline-block rounded-md px-2 py-0.5 text-[11px] font-semibold ${technical.adx.direction.includes("Compradores") ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : technical.adx.direction.includes("Vendedores") ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-slate-800 text-slate-300"}`}>{technical.adx.strength} • {technical.adx.direction}</span>
+          </div>
+
+          {/* Estocástico */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>Estocástico (14, 3)</span><Activity className="h-4 w-4 text-pink-400" /></div>
+            <div className="mt-2 text-2xl font-black text-white">%K {technical.stochastic.k}</div>
+            <div className="mt-1 text-[11px] text-slate-300">%D {technical.stochastic.d}</div>
+            <span className={`mt-2 inline-block rounded-md px-2 py-0.5 text-[11px] font-semibold ${technical.stochastic.status.includes("Sobrevendido") ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : technical.stochastic.status.includes("Sobrecomprado") ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-slate-800 text-slate-300"}`}>{technical.stochastic.status}</span>
+          </div>
+
+          {/* Williams %R + CCI */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>Williams %R (14) &amp; CCI (20)</span><Scale className="h-4 w-4 text-orange-400" /></div>
+            <div className="mt-2 text-xl font-black text-white">%R {technical.williamsR.value}</div>
+            <div className="text-[11px] text-slate-300">{technical.williamsR.status}</div>
+            <div className="mt-2 text-xl font-black text-white">CCI {technical.cci.value}</div>
+            <div className="text-[11px] text-slate-300">{technical.cci.status}</div>
+          </div>
+
+          {/* OBV + ROC */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>OBV &amp; ROC (12)</span><BarChart2 className="h-4 w-4 text-lime-400" /></div>
+            <div className={`mt-2 text-sm font-black ${technical.obv.trend.includes("Acumulação") ? "text-emerald-400" : technical.obv.trend.includes("Distribuição") ? "text-rose-400" : "text-white"}`}>{technical.obv.trend}</div>
+            {technical.obv.divergence && <div className="mt-1 text-[10px] text-amber-300">{technical.obv.divergence}</div>}
+            <div className="mt-2 text-xl font-black text-white">ROC {technical.roc.value > 0 ? "+" : ""}{technical.roc.value}%</div>
+            <div className="text-[11px] text-slate-300">{technical.roc.status}</div>
+          </div>
+
+          {/* Ichimoku */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>Ichimoku Kinko Hyo</span><Layers className="h-4 w-4 text-indigo-400" /></div>
+            <div className={`mt-2 text-sm font-black ${technical.ichimoku.position.includes("Acima") ? "text-emerald-400" : technical.ichimoku.position.includes("Abaixo") ? "text-rose-400" : "text-amber-400"}`}>{technical.ichimoku.position}</div>
+            <div className="mt-1 text-[11px] text-slate-300 space-y-0.5">
+              <div>Tenkan {technical.ichimoku.tenkan} | Kijun {technical.ichimoku.kijun}</div>
+              <div>Nuvem: {Math.min(technical.ichimoku.spanA, technical.ichimoku.spanB)} – {Math.max(technical.ichimoku.spanA, technical.ichimoku.spanB)}</div>
+            </div>
+            <span className="mt-2 inline-block rounded-md bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-300">TK: {technical.ichimoku.tkCross}</span>
+          </div>
+
+          {/* Parabolic SAR + VWAP */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>Parabolic SAR &amp; VWAP (20)</span><Crosshair className="h-4 w-4 text-teal-400" /></div>
+            <div className="mt-2 text-xl font-black text-white">SAR {technical.parabolicSar.value}</div>
+            <div className={`text-[11px] font-semibold ${technical.parabolicSar.signal.includes("Compra") ? "text-emerald-400" : "text-rose-400"}`}>{technical.parabolicSar.signal}</div>
+            <div className="mt-2 text-xl font-black text-white">VWAP {technical.vwap.value}</div>
+            <div className={`text-[11px] font-semibold ${technical.vwap.position.includes("Acima") ? "text-emerald-400" : "text-rose-400"}`}>{technical.vwap.position}</div>
+          </div>
+
+          {/* Fibonacci */}
+          <div className="col-span-1 sm:col-span-2 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex items-center justify-between text-xs text-slate-400"><span>Retrações de Fibonacci (swing 60 sessões)</span><span className="text-amber-400 font-semibold">Nível mais próximo: {technical.fibonacci.nearest}</span></div>
+            <div className="mt-3 grid grid-cols-4 sm:grid-cols-7 gap-2">
+              {technical.fibonacci.levels.map((l) => (
+                <div key={l.label} className={`rounded-xl p-2 text-center border ${l.label === technical.fibonacci.nearest ? "border-amber-500 bg-amber-950/40" : "border-slate-800 bg-slate-950"}`}>
+                  <div className="text-[10px] text-slate-400">{l.label}</div>
+                  <div className="text-xs font-bold text-white">{l.price.toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Support and Resistance exact levels */}

@@ -42,6 +42,18 @@ export interface TechnicalAnalysisResult {
   supportLevel: number;
   resistanceLevel: number;
   volumeTrend: "Volume Acima da Média (Forte Validação)" | "Volume Normal" | "Volume Fraco (Baixa Convicção)";
+  adx: { value: number; plusDI: number; minusDI: number; strength: "Tendência Forte" | "Tendência Moderada" | "Sem Tendência (Lateral)"; direction: "Compradores Dominam" | "Vendedores Dominam" | "Equilíbrio" };
+  williamsR: { value: number; status: "Sobrevendido" | "Neutro" | "Sobrecomprado" };
+  cci: { value: number; status: "Sobrevendido (<-100)" | "Neutro" | "Sobrecomprado (>100)" };
+  obv: { trend: "Acumulação (Fluxo Comprador)" | "Distribuição (Fluxo Vendedor)" | "Neutro"; divergence: string | null };
+  roc: { value: number; status: "Momentum Positivo" | "Momentum Negativo" | "Momentum Neutro" };
+  ichimoku: { tenkan: number; kijun: number; spanA: number; spanB: number; position: "Acima da Nuvem (Altista)" | "Dentro da Nuvem (Indefinido)" | "Abaixo da Nuvem (Baixista)"; tkCross: "Cruzamento Altista" | "Cruzamento Baixista" | "Sem Cruzamento" };
+  parabolicSar: { value: number; signal: "SAR Abaixo do Preço (Compra)" | "SAR Acima do Preço (Venda)" };
+  vwap: { value: number; position: "Preço Acima do VWAP" | "Preço Abaixo do VWAP" };
+  fibonacci: { high: number; low: number; levels: { label: string; price: number }[]; nearest: string };
+  signalsBullish: number;
+  signalsBearish: number;
+  signalsTotal: number;
   scoreTecnico: number; // 0 - 100
 }
 
@@ -203,6 +215,61 @@ export function calculateATR(highs: number[], lows: number[], closes: number[], 
   return Number(avg.toFixed(2));
 }
 
+
+export function calculateADX(highs: number[], lows: number[], closes: number[], period = 14) {
+  const n = closes.length;
+  if (n < period + 2) return { adx: 20, plusDI: 20, minusDI: 20 };
+  const tr: number[] = [], pdm: number[] = [], ndm: number[] = [];
+  for (let i = 1; i < n; i++) {
+    const up = highs[i] - highs[i - 1];
+    const down = lows[i - 1] - lows[i];
+    pdm.push(up > down && up > 0 ? up : 0);
+    ndm.push(down > up && down > 0 ? down : 0);
+    tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+  }
+  const smooth = (arr: number[]) => {
+    const out: number[] = [];
+    let s = arr.slice(0, period).reduce((a, b) => a + b, 0);
+    out.push(s);
+    for (let i = period; i < arr.length; i++) { s = s - s / period + arr[i]; out.push(s); }
+    return out;
+  };
+  const sTR = smooth(tr), sP = smooth(pdm), sN = smooth(ndm);
+  const dx: number[] = [];
+  let lastP = 0, lastN = 0;
+  for (let i = 0; i < sTR.length; i++) {
+    const p = sTR[i] ? (sP[i] / sTR[i]) * 100 : 0;
+    const q = sTR[i] ? (sN[i] / sTR[i]) * 100 : 0;
+    lastP = p; lastN = q;
+    dx.push(p + q ? (Math.abs(p - q) / (p + q)) * 100 : 0);
+  }
+  const adxSlice = dx.slice(-period);
+  const adx = adxSlice.reduce((a, b) => a + b, 0) / Math.max(1, adxSlice.length);
+  return { adx: Number(adx.toFixed(1)), plusDI: Number(lastP.toFixed(1)), minusDI: Number(lastN.toFixed(1)) };
+}
+
+export function calculateParabolicSAR(highs: number[], lows: number[], step = 0.02, max = 0.2): number {
+  const n = highs.length;
+  if (n < 3) return lows[n - 1] || 0;
+  let uptrend = highs[1] > highs[0];
+  let sar = uptrend ? lows[0] : highs[0];
+  let ep = uptrend ? highs[1] : lows[1];
+  let af = step;
+  for (let i = 2; i < n; i++) {
+    sar = sar + af * (ep - sar);
+    if (uptrend) {
+      sar = Math.min(sar, lows[i - 1], lows[i - 2]);
+      if (lows[i] < sar) { uptrend = false; sar = ep; ep = lows[i]; af = step; }
+      else if (highs[i] > ep) { ep = highs[i]; af = Math.min(max, af + step); }
+    } else {
+      sar = Math.max(sar, highs[i - 1], highs[i - 2]);
+      if (highs[i] > sar) { uptrend = true; sar = ep; ep = highs[i]; af = step; }
+      else if (lows[i] < ep) { ep = lows[i]; af = Math.min(max, af + step); }
+    }
+  }
+  return Number(sar.toFixed(2));
+}
+
 export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnalysisResult {
   if (!history || history.length === 0) {
     return {
@@ -226,6 +293,18 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
       supportLevel: 95,
       resistanceLevel: 105,
       volumeTrend: "Volume Normal",
+      adx: { value: 20, plusDI: 20, minusDI: 20, strength: "Sem Tendência (Lateral)", direction: "Equilíbrio" },
+      williamsR: { value: -50, status: "Neutro" },
+      cci: { value: 0, status: "Neutro" },
+      obv: { trend: "Neutro", divergence: null },
+      roc: { value: 0, status: "Momentum Neutro" },
+      ichimoku: { tenkan: 100, kijun: 100, spanA: 100, spanB: 100, position: "Dentro da Nuvem (Indefinido)", tkCross: "Sem Cruzamento" },
+      parabolicSar: { value: 98, signal: "SAR Abaixo do Preço (Compra)" },
+      vwap: { value: 100, position: "Preço Acima do VWAP" },
+      fibonacci: { high: 120, low: 80, levels: [], nearest: "50%" },
+      signalsBullish: 0,
+      signalsBearish: 0,
+      signalsTotal: 0,
       scoreTecnico: 50
     };
   }
@@ -297,7 +376,12 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
   const recentHigh14 = Math.max(...highs.slice(-14));
   const recentLow14 = Math.min(...lows.slice(-14));
   const stochK = recentHigh14 === recentLow14 ? 50 : Number((((currentPrice - recentLow14) / (recentHigh14 - recentLow14)) * 100).toFixed(1));
-  const stochD = stochK; // simplified D
+  const kSeries: number[] = [];
+  for (let i = Math.max(14, closes.length - 3); i <= closes.length; i++) {
+    const hh = Math.max(...highs.slice(i - 14, i)); const ll = Math.min(...lows.slice(i - 14, i));
+    kSeries.push(hh === ll ? 50 : ((closes[i - 1] - ll) / (hh - ll)) * 100);
+  }
+  const stochD = Number((kSeries.reduce((a, b) => a + b, 0) / Math.max(1, kSeries.length)).toFixed(1));
   let stochStatus: TechnicalAnalysisResult["stochastic"]["status"] = "Neutro";
   if (stochK <= 20) stochStatus = "Sobrevendido (<20)";
   else if (stochK >= 80) stochStatus = "Sobrecomprado (>80)";
@@ -318,6 +402,86 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
   let volumeTrend: TechnicalAnalysisResult["volumeTrend"] = "Volume Normal";
   if (recentVolAvg > longVolAvg * 1.25) volumeTrend = "Volume Acima da Média (Forte Validação)";
   else if (recentVolAvg < longVolAvg * 0.75) volumeTrend = "Volume Fraco (Baixa Convicção)";
+
+
+  // ADX / DMI
+  const adxRaw = calculateADX(highs, lows, closes, 14);
+  const adxStrength: TechnicalAnalysisResult["adx"]["strength"] = adxRaw.adx >= 25 ? "Tendência Forte" : adxRaw.adx >= 18 ? "Tendência Moderada" : "Sem Tendência (Lateral)";
+  const adxDirection: TechnicalAnalysisResult["adx"]["direction"] = adxRaw.plusDI > adxRaw.minusDI * 1.1 ? "Compradores Dominam" : adxRaw.minusDI > adxRaw.plusDI * 1.1 ? "Vendedores Dominam" : "Equilíbrio";
+
+  // Williams %R (14)
+  const wr = recentHigh14 === recentLow14 ? -50 : Number((((recentHigh14 - currentPrice) / (recentHigh14 - recentLow14)) * -100).toFixed(1));
+  const wrStatus: TechnicalAnalysisResult["williamsR"]["status"] = wr <= -80 ? "Sobrevendido" : wr >= -20 ? "Sobrecomprado" : "Neutro";
+
+  // CCI (20)
+  const tp = history.map(h => (h.high + h.low + h.close) / 3);
+  const tp20 = tp.slice(-20);
+  const tpMean = tp20.reduce((a, b) => a + b, 0) / tp20.length;
+  const meanDev = tp20.reduce((a, b) => a + Math.abs(b - tpMean), 0) / tp20.length || 1;
+  const cciVal = Number((((tp[tp.length - 1] - tpMean) / (0.015 * meanDev))).toFixed(1));
+  const cciStatus: TechnicalAnalysisResult["cci"]["status"] = cciVal < -100 ? "Sobrevendido (<-100)" : cciVal > 100 ? "Sobrecomprado (>100)" : "Neutro";
+
+  // OBV
+  let obv = 0; const obvSeries: number[] = [0];
+  for (let i = 1; i < closes.length; i++) { obv += closes[i] > closes[i - 1] ? volumes[i] : closes[i] < closes[i - 1] ? -volumes[i] : 0; obvSeries.push(obv); }
+  const obvNow = obvSeries[obvSeries.length - 1]; const obvPrev = obvSeries[Math.max(0, obvSeries.length - 11)];
+  const priceNow = closes[closes.length - 1]; const pricePrev = closes[Math.max(0, closes.length - 11)];
+  const obvTrend: TechnicalAnalysisResult["obv"]["trend"] = obvNow > obvPrev * 1.0001 + 1 ? "Acumulação (Fluxo Comprador)" : obvNow < obvPrev - 1 ? "Distribuição (Fluxo Vendedor)" : "Neutro";
+  let obvDiv: string | null = null;
+  if (priceNow < pricePrev && obvNow > obvPrev) obvDiv = "Divergência Altista: preço cai mas OBV sobe (acumulação oculta)";
+  if (priceNow > pricePrev && obvNow < obvPrev) obvDiv = "Divergência Baixista: preço sobe mas OBV cai (distribuição oculta)";
+
+  // ROC (12)
+  const rocBase = closes[Math.max(0, closes.length - 13)] || currentPrice;
+  const rocVal = Number((((currentPrice - rocBase) / rocBase) * 100).toFixed(2));
+  const rocStatus: TechnicalAnalysisResult["roc"]["status"] = rocVal > 1.5 ? "Momentum Positivo" : rocVal < -1.5 ? "Momentum Negativo" : "Momentum Neutro";
+
+  // Ichimoku (9, 26, 52)
+  const mid = (arr: number[], p: number, hs: number[], ls: number[]) => { const h = Math.max(...hs.slice(-p)); const l = Math.min(...ls.slice(-p)); return (h + l) / 2; };
+  const tenkan = Number(mid(closes, 9, highs, lows).toFixed(2));
+  const kijun = Number(mid(closes, 26, highs, lows).toFixed(2));
+  const spanA = Number(((tenkan + kijun) / 2).toFixed(2));
+  const spanB = Number(mid(closes, Math.min(52, closes.length), highs, lows).toFixed(2));
+  const cloudTop = Math.max(spanA, spanB), cloudBottom = Math.min(spanA, spanB);
+  const ichiPos: TechnicalAnalysisResult["ichimoku"]["position"] = currentPrice > cloudTop ? "Acima da Nuvem (Altista)" : currentPrice < cloudBottom ? "Abaixo da Nuvem (Baixista)" : "Dentro da Nuvem (Indefinido)";
+  const tkCross: TechnicalAnalysisResult["ichimoku"]["tkCross"] = tenkan > kijun ? "Cruzamento Altista" : tenkan < kijun ? "Cruzamento Baixista" : "Sem Cruzamento";
+
+  // Parabolic SAR
+  const sarVal = calculateParabolicSAR(highs, lows);
+  const sarSignal: TechnicalAnalysisResult["parabolicSar"]["signal"] = sarVal < currentPrice ? "SAR Abaixo do Preço (Compra)" : "SAR Acima do Preço (Venda)";
+
+  // VWAP (últimas 20 sessões)
+  const last20 = history.slice(-20);
+  const vwapNum = last20.reduce((a, h) => a + ((h.high + h.low + h.close) / 3) * h.volume, 0);
+  const vwapDen = last20.reduce((a, h) => a + h.volume, 0) || 1;
+  const vwapVal = Number((vwapNum / vwapDen).toFixed(2));
+  const vwapPos: TechnicalAnalysisResult["vwap"]["position"] = currentPrice >= vwapVal ? "Preço Acima do VWAP" : "Preço Abaixo do VWAP";
+
+  // Fibonacci (swing 60 sessões)
+  const sw = history.slice(-60);
+  const fibHigh = Math.max(...sw.map(p => p.high)); const fibLow = Math.min(...sw.map(p => p.low));
+  const fibRange = fibHigh - fibLow || 1;
+  const fibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map(r => ({ label: `${(r * 100).toFixed(1)}%`, price: Number((fibHigh - fibRange * r).toFixed(2)) }));
+  const nearestFib = fibLevels.reduce((best, l) => Math.abs(l.price - currentPrice) < Math.abs(best.price - currentPrice) ? l : best, fibLevels[0]).label;
+
+  // Contagem de sinais (confluência)
+  let bullSignals = 0, bearSignals = 0;
+  const vote = (b: boolean | null) => { if (b === true) bullSignals++; else if (b === false) bearSignals++; };
+  vote(currentRsi < 35 ? true : currentRsi > 68 ? false : null);
+  vote(macdStatus.includes("Altista") ? true : macdStatus.includes("Baixista") ? false : null);
+  vote(maTrend.includes("Altista") ? true : maTrend.includes("Baixista") ? false : null);
+  vote(bbPos.includes("Inferior") ? true : bbPos.includes("Superior") ? false : null);
+  vote(stochK <= 20 ? true : stochK >= 80 ? false : null);
+  vote(adxDirection === "Compradores Dominam" ? true : adxDirection === "Vendedores Dominam" ? false : null);
+  vote(wrStatus === "Sobrevendido" ? true : wrStatus === "Sobrecomprado" ? false : null);
+  vote(cciStatus.includes("Sobrevendido") ? true : cciStatus.includes("Sobrecomprado") ? false : null);
+  vote(obvTrend.includes("Acumulação") ? true : obvTrend.includes("Distribuição") ? false : null);
+  vote(rocStatus === "Momentum Positivo" ? true : rocStatus === "Momentum Negativo" ? false : null);
+  vote(ichiPos.includes("Acima") ? true : ichiPos.includes("Abaixo") ? false : null);
+  vote(tkCross === "Cruzamento Altista" ? true : tkCross === "Cruzamento Baixista" ? false : null);
+  vote(sarSignal.includes("Compra") ? true : false);
+  vote(vwapPos.includes("Acima") ? true : false);
+  vote(goldenCross ? true : deathCross ? false : null);
 
   // Score Técnico (0 - 100)
   let techScore = 50;
@@ -346,6 +510,20 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
   if (goldenCross) techScore += 15;
   if (deathCross) techScore -= 15;
 
+  // Novos indicadores (confluência)
+  if (adxDirection === "Compradores Dominam" && adxRaw.adx >= 20) techScore += 8;
+  else if (adxDirection === "Vendedores Dominam" && adxRaw.adx >= 20) techScore -= 8;
+  if (ichiPos.includes("Acima")) techScore += 7; else if (ichiPos.includes("Abaixo")) techScore -= 7;
+  if (tkCross === "Cruzamento Altista") techScore += 3; else if (tkCross === "Cruzamento Baixista") techScore -= 3;
+  if (obvTrend.includes("Acumulação")) techScore += 5; else if (obvTrend.includes("Distribuição")) techScore -= 5;
+  if (obvDiv?.startsWith("Divergência Altista")) techScore += 4; if (obvDiv?.startsWith("Divergência Baixista")) techScore -= 4;
+  if (rocStatus === "Momentum Positivo") techScore += 4; else if (rocStatus === "Momentum Negativo") techScore -= 4;
+  if (sarSignal.includes("Compra")) techScore += 4; else techScore -= 4;
+  if (vwapPos.includes("Acima")) techScore += 3; else techScore -= 3;
+  if (wrStatus === "Sobrevendido") techScore += 4; else if (wrStatus === "Sobrecomprado") techScore -= 4;
+  if (cciStatus.includes("Sobrevendido")) techScore += 4; else if (cciStatus.includes("Sobrecomprado")) techScore -= 4;
+  if (stochK <= 20) techScore += 4; else if (stochK >= 80) techScore -= 4;
+
   techScore = Math.max(5, Math.min(95, Math.round(techScore)));
 
   return {
@@ -369,6 +547,18 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
     supportLevel,
     resistanceLevel,
     volumeTrend,
+    adx: { value: adxRaw.adx, plusDI: adxRaw.plusDI, minusDI: adxRaw.minusDI, strength: adxStrength, direction: adxDirection },
+    williamsR: { value: wr, status: wrStatus },
+    cci: { value: cciVal, status: cciStatus },
+    obv: { trend: obvTrend, divergence: obvDiv },
+    roc: { value: rocVal, status: rocStatus },
+    ichimoku: { tenkan, kijun, spanA, spanB, position: ichiPos, tkCross },
+    parabolicSar: { value: sarVal, signal: sarSignal },
+    vwap: { value: vwapVal, position: vwapPos },
+    fibonacci: { high: fibHigh, low: fibLow, levels: fibLevels, nearest: nearestFib },
+    signalsBullish: bullSignals,
+    signalsBearish: bearSignals,
+    signalsTotal: bullSignals + bearSignals,
     scoreTecnico: techScore
   };
 }
@@ -376,10 +566,12 @@ export function calculateTechnicalAnalysis(history: PricePoint[]): TechnicalAnal
 export function evaluateStockExpectation(
   tech: TechnicalAnalysisResult,
   fund: FundamentalData,
-  ticker: string
+  ticker: string,
+  news?: { scoreImpact: number; label: string; positive: number; negative: number }
 ): StockExpectationVerdict {
-  // Consolidated score weighted: 60% Technical, 40% Fundamental
-  const overallScore = Math.round(tech.scoreTecnico * 0.6 + fund.scoreFundamental * 0.4);
+  // Consolidated score weighted: 60% Technical, 40% Fundamental, + ajuste de sentimento noticioso (-8..+8)
+  const newsAdj = news?.scoreImpact || 0;
+  const overallScore = Math.max(3, Math.min(97, Math.round(tech.scoreTecnico * 0.6 + fund.scoreFundamental * 0.4 + newsAdj)));
 
   let verdict: StockExpectationVerdict["verdict"];
   let verdictLabel: string;
@@ -476,6 +668,18 @@ export function evaluateStockExpectation(
 
   if (fund.valuationStatus.includes("Subavaliada")) bullish.push(`Valuation favorável: rácio P/L atrativo e modelo DCF sugerindo ação com desconto face ao valor intrínseco.`);
   if (fund.valuationStatus.includes("Sobreavaliada")) bearish.push(`Valuation esticado com múltiplos P/L elevados face à média histórica e pares do setor.`);
+
+  if (tech.adx.direction === "Compradores Dominam" && tech.adx.value >= 20) bullish.push(`ADX em ${tech.adx.value} com +DI > -DI: tendência com força e compradores no controlo.`);
+  if (tech.adx.direction === "Vendedores Dominam" && tech.adx.value >= 20) bearish.push(`ADX em ${tech.adx.value} com -DI > +DI: pressão vendedora com força de tendência.`);
+  if (tech.ichimoku.position.includes("Acima")) bullish.push(`Preço acima da Nuvem Ichimoku (Kumo) — estrutura de tendência altista confirmada.`);
+  if (tech.ichimoku.position.includes("Abaixo")) bearish.push(`Preço abaixo da Nuvem Ichimoku — resistência dinâmica por cima do preço.`);
+  if (tech.obv.divergence) (tech.obv.divergence.startsWith("Divergência Altista") ? bullish : bearish).push(tech.obv.divergence + ".");
+  if (tech.parabolicSar.signal.includes("Compra")) bullish.push(`Parabolic SAR (${tech.parabolicSar.value}) abaixo do preço a servir de trailing stop.`);
+  else bearish.push(`Parabolic SAR (${tech.parabolicSar.value}) acima do preço — sinal de venda ativo.`);
+  if (news && news.scoreImpact >= 2) bullish.push(`${news.label}: ${news.positive} notícias positivas vs ${news.negative} negativas nos últimos dias.`);
+  if (news && news.scoreImpact <= -2) bearish.push(`${news.label}: ${news.negative} notícias negativas vs ${news.positive} positivas nos últimos dias.`);
+  bullish.push(`Confluência: ${tech.signalsBullish} de ${tech.signalsTotal} indicadores a apontar para subida.`);
+  bearish.push(`Confluência: ${tech.signalsBearish} de ${tech.signalsTotal} indicadores a apontar para queda.`);
 
   if (fund.dividendYield && fund.dividendYield > 3.0) bullish.push(`Yield de dividendo sólido de ${fund.dividendYield.toFixed(1)}% oferece suporte defensivo.`);
 
