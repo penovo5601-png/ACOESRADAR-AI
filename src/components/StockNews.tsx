@@ -27,7 +27,8 @@ export function StockNews({ news, symbol }: { news: NewsSentimentSummary; symbol
           </div>
           <h3 className="mt-2 text-xl font-black text-white">Fluxo Noticioso &amp; Sentimento</h3>
           <p className="text-xs text-slate-400 mt-1">
-            Agregado em tempo real (Yahoo Finance + Google Notícias). O sentimento das manchetes é ponderado pela recência e entra no veredito final (até ±8 pontos).
+            Agregado em tempo real (Yahoo Finance + Google Notícias). <strong className="text-slate-300">Só notícias das últimas 72h influenciam o veredito</strong> (≤24h: 100% · ≤48h: 75% · ≤72h: 40%).
+            Notícias mais antigas ficam listadas como contexto, mas com <strong className="text-slate-300">impacto zero</strong>.
           </p>
         </div>
 
@@ -45,6 +46,7 @@ export function StockNews({ news, symbol }: { news: NewsSentimentSummary; symbol
             <span>{news.neutral} neutras</span>
             <span className="text-rose-400">▼ {news.negative} negativas</span>
           </div>
+          <div className="mt-1 text-[10px] text-slate-500">{news.freshCount} com impacto (≤72h) · {news.staleCount} antigas ignoradas</div>
           <div className={`mt-2 text-[11px] font-bold ${scoreColor}`}>
             Impacto no veredito: {news.scoreImpact > 0 ? "+" : ""}{news.scoreImpact} pts
           </div>
@@ -63,7 +65,7 @@ export function StockNews({ news, symbol }: { news: NewsSentimentSummary; symbol
               href={n.link}
               target="_blank"
               rel="noopener noreferrer"
-              className="group flex gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-3.5 transition hover:border-blue-500/60 hover:bg-slate-900"
+              className={`group flex gap-3 rounded-2xl border bg-slate-950 p-3.5 transition hover:border-blue-500/60 hover:bg-slate-900 ${n.isStale ? "border-slate-800/60 opacity-60" : "border-slate-800"}`}
             >
               {n.thumbnail ? (
                 <img src={n.thumbnail} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover bg-slate-800" />
@@ -77,6 +79,11 @@ export function StockNews({ news, symbol }: { news: NewsSentimentSummary; symbol
                   <span className="font-semibold text-slate-300 truncate">{n.source}</span>
                   <span>•</span>
                   <span>{timeAgo(n.publishedAt)}</span>
+                  {n.isStale ? (
+                    <span className="rounded bg-slate-800 px-1.5 py-0.5 font-bold text-slate-400">SEM IMPACTO (&gt;3 dias)</span>
+                  ) : (
+                    <span className="rounded bg-blue-950 px-1.5 py-0.5 font-bold text-blue-300 border border-blue-900">peso {Math.round(n.impactWeight * 100)}%</span>
+                  )}
                   <span
                     className={`ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-bold ${
                       n.sentiment === "POSITIVA"

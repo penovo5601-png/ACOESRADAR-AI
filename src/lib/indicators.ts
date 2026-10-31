@@ -567,11 +567,15 @@ export function evaluateStockExpectation(
   tech: TechnicalAnalysisResult,
   fund: FundamentalData,
   ticker: string,
-  news?: { scoreImpact: number; label: string; positive: number; negative: number }
+  news?: { scoreImpact: number; label: string; positive: number; negative: number },
+  scenario?: { final: { overallScore: number; direction: "SOBE" | "DESCE" | "NEUTRO"; probability: number; confidence: number; confidenceLabel: "Alta Convicção" | "Média Convicção" | "Baixa / Cautela" }; validation: { grade: string; passed: number; total: number; contradictions: string[] }; backtest: { reliabilityLabel: string } }
 ): StockExpectationVerdict {
-  // Consolidated score weighted: 60% Technical, 40% Fundamental, + ajuste de sentimento noticioso (-8..+8)
+  // Score consolidado: se existir motor de cenários (Monte Carlo + backtest + validação) é ele que manda;
+  // caso contrário 60% Técnico + 40% Fundamental + ajuste de notícias (-8..+8)
   const newsAdj = news?.scoreImpact || 0;
-  const overallScore = Math.max(3, Math.min(97, Math.round(tech.scoreTecnico * 0.6 + fund.scoreFundamental * 0.4 + newsAdj)));
+  const overallScore = scenario
+    ? scenario.final.overallScore
+    : Math.max(3, Math.min(97, Math.round(tech.scoreTecnico * 0.6 + fund.scoreFundamental * 0.4 + newsAdj)));
 
   let verdict: StockExpectationVerdict["verdict"];
   let verdictLabel: string;
@@ -621,6 +625,26 @@ export function evaluateStockExpectation(
     direction = "DESCE";
     probability = Math.min(95, 75 + Math.round((26 - overallScore) * 0.8));
     confidenceLevel = "Alta Convicção";
+  }
+
+  // O motor de cenários (Monte Carlo + backtest + validação) decide a direção, probabilidade e confiança
+  if (scenario) {
+    direction = scenario.final.direction;
+    probability = scenario.final.probability;
+    confidenceLevel = scenario.final.confidenceLabel;
+    const strong = scenario.final.confidence >= 60 && scenario.validation.grade !== "Validação Fraca";
+    if (direction === "SOBE") {
+      verdict = overallScore >= 70 && strong ? "FORTE_SUBIDA" : "SUBIDA_MODERADA";
+      verdictLabel = verdict === "FORTE_SUBIDA" ? "FORTE SUBIDA (VALIDADA POR CENÁRIOS E BACKTEST)" : "SUBIDA PROVÁVEL (VIÉS ALTISTA)";
+      verdictEmoji = verdict === "FORTE_SUBIDA" ? "🚀" : "📈"; verdictColor = verdict === "FORTE_SUBIDA" ? "emerald" : "green";
+    } else if (direction === "DESCE") {
+      verdict = overallScore <= 30 && strong ? "FORTE_QUEDA" : "QUEDA_MODERADA";
+      verdictLabel = verdict === "FORTE_QUEDA" ? "FORTE QUEDA (VALIDADA POR CENÁRIOS E BACKTEST)" : "QUEDA PROVÁVEL (VIÉS BAIXISTA)";
+      verdictEmoji = verdict === "FORTE_QUEDA" ? "🔴" : "📉"; verdictColor = verdict === "FORTE_QUEDA" ? "rose" : "orange";
+    } else {
+      verdict = "NEUTRO"; verdictLabel = scenario.validation.contradictions.length ? "NEUTRO / SINAIS CONTRADITÓRIOS (AGUARDAR CONFIRMAÇÃO)" : "NEUTRO / LATERALIZAÇÃO (AGUARDAR CONFIRMAÇÃO)";
+      verdictEmoji = "⚖️"; verdictColor = "amber"; probability = 50;
+    }
   }
 
   // Price targets calculation
@@ -679,6 +703,10 @@ export function evaluateStockExpectation(
   if (news && news.scoreImpact >= 2) bullish.push(`${news.label}: ${news.positive} notícias positivas vs ${news.negative} negativas nos últimos dias.`);
   if (news && news.scoreImpact <= -2) bearish.push(`${news.label}: ${news.negative} notícias negativas vs ${news.positive} positivas nos últimos dias.`);
   bullish.push(`Confluência: ${tech.signalsBullish} de ${tech.signalsTotal} indicadores a apontar para subida.`);
+  if (scenario) {
+    bearish.push(...scenario.validation.contradictions);
+    (scenario.backtest.reliabilityLabel.startsWith("Atenção") ? bearish : bullish).push(scenario.backtest.reliabilityLabel + ".");
+  }
   bearish.push(`Confluência: ${tech.signalsBearish} de ${tech.signalsTotal} indicadores a apontar para queda.`);
 
   if (fund.dividendYield && fund.dividendYield > 3.0) bullish.push(`Yield de dividendo sólido de ${fund.dividendYield.toFixed(1)}% oferece suporte defensivo.`);

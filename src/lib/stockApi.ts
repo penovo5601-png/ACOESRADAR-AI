@@ -1,6 +1,7 @@
 import { PricePoint, TechnicalAnalysisResult, FundamentalData, calculateTechnicalAnalysis, evaluateStockExpectation, StockExpectationVerdict } from "./indicators";
 import { GLOBAL_STOCKS_DIRECTORY, StockDirectoryItem } from "@/data/globalStocks";
 import { fetchStockNews, NewsSentimentSummary } from "./news";
+import { runScenarioEngine, ScenarioResult } from "./scenarios";
 
 export interface StockFullAnalysis {
   symbol: string;
@@ -26,6 +27,7 @@ export interface StockFullAnalysis {
   fundamental: FundamentalData;
   expectation: StockExpectationVerdict;
   news: NewsSentimentSummary;
+  scenario: ScenarioResult;
   lastUpdated: string;
 }
 
@@ -46,7 +48,7 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
   let metaLow52 = 0;
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSymbol)}?interval=1d&range=6mo`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSymbol)}?interval=1d&range=2y`;
     const res = await fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
@@ -114,15 +116,36 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
 
   // Notícias associadas + sentimento
   const resolvedName = dirMatch?.name || metaName || cleanSymbol;
-  let news: NewsSentimentSummary = { items: [], positive: 0, negative: 0, neutral: 0, score: 0, label: "Fluxo Noticioso Neutro", scoreImpact: 0 };
+  let news: NewsSentimentSummary = { items: [], positive: 0, negative: 0, neutral: 0, score: 0, freshCount: 0, staleCount: 0, label: "Sem Notícias Recentes (72h) com Impacto", scoreImpact: 0 };
   try {
     news = await fetchStockNews(cleanSymbol, resolvedName);
   } catch (err) {
     console.warn("News fetch failed:", err);
   }
 
-  // Evaluate Expectation (Sobe ou Desce) — técnico + fundamental + notícias
-  const expectation = evaluateStockExpectation(technical, fundamental, cleanSymbol, news);
+  // Motor de cenários + validação (Monte Carlo, backtest walk-forward, checklist)
+  const scenario = runScenarioEngine({
+    candles: history.map(h => ({ o: h.open, h: h.high, l: h.low, c: h.close, v: h.volume, t: h.date })),
+    currentPrice: technical.currentPrice,
+    atr: technical.atr14,
+    support: technical.supportLevel,
+    resistance: technical.resistanceLevel,
+    technicalBias: (technical.scoreTecnico - 50) * 2,
+    fundamentalBias: (fundamental.scoreFundamental - 50) * 2,
+    newsBias: news.freshCount > 0 ? news.score : 0,
+    newsFreshCount: news.freshCount,
+    bullishSignals: technical.signalsBullish,
+    bearishSignals: technical.signalsBearish,
+    scoreAt: (window) => {
+      const pts: PricePoint[] = window.map(w => ({ date: String(w.t ?? ""), open: w.o, high: w.h, low: w.l, close: w.c, volume: w.v }));
+      return (calculateTechnicalAnalysis(pts).scoreTecnico - 50) * 2;
+    },
+    horizonDays: 20,
+    lastCandleTime: history.length ? new Date(history[history.length - 1].date).getTime() : undefined
+  });
+
+  // Evaluate Expectation (Sobe ou Desce) — técnico + fundamental + notícias + cenários/validação
+  const expectation = evaluateStockExpectation(technical, fundamental, cleanSymbol, news, scenario);
 
   const lastPoint = history[history.length - 1];
 
@@ -150,6 +173,7 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
     fundamental,
     expectation,
     news,
+    scenario,
     lastUpdated: new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   };
 }
@@ -295,7 +319,7 @@ function generateFundamentalData(symbol: string, currentPrice: number, sector: s
 
 function generateFallbackHistory(symbol: string, basePrice: number): PricePoint[] {
   const points: PricePoint[] = [];
-  const days = 90;
+  const days = 520;
   const now = new Date();
   
   // Seed variation

@@ -7,6 +7,9 @@ export interface NewsItem {
   sentimentScore: number; // -1 .. 1
   thumbnail?: string;
   origin: "Yahoo Finance" | "Google Notícias";
+  ageHours: number;
+  impactWeight: number; // 1.0 (<=24h) | 0.75 (<=48h) | 0.4 (<=72h) | 0 (>72h, sem impacto)
+  isStale: boolean; // > 72h
 }
 
 export interface NewsSentimentSummary {
@@ -14,8 +17,10 @@ export interface NewsSentimentSummary {
   positive: number;
   negative: number;
   neutral: number;
-  score: number; // -100 .. 100
-  label: "Fluxo Noticioso Muito Positivo" | "Fluxo Noticioso Positivo" | "Fluxo Noticioso Neutro" | "Fluxo Noticioso Negativo" | "Fluxo Noticioso Muito Negativo";
+  score: number; // -100 .. 100 (apenas notícias <= 72h)
+  freshCount: number; // notícias com impacto (<= 72h)
+  staleCount: number; // notícias antigas listadas mas ignoradas
+  label: "Fluxo Noticioso Muito Positivo" | "Fluxo Noticioso Positivo" | "Fluxo Noticioso Neutro" | "Fluxo Noticioso Negativo" | "Fluxo Noticioso Muito Negativo" | "Sem Notícias Recentes (72h) com Impacto";
   scoreImpact: number; // contribution to final score (-8 .. +8)
 }
 
@@ -47,6 +52,19 @@ function scoreSentiment(text: string): number {
   return Math.max(-1, Math.min(1, (pos - neg) / Math.max(1, pos + neg)));
 }
 
+export function newsImpactWeight(ageHours: number): number {
+  if (ageHours <= 24) return 1;
+  if (ageHours <= 48) return 0.75;
+  if (ageHours <= 72) return 0.4;
+  return 0;
+}
+
+function enrich(n: Omit<NewsItem, "ageHours" | "impactWeight" | "isStale">): NewsItem {
+  const ageHours = Math.max(0, (Date.now() - new Date(n.publishedAt).getTime()) / 3600000);
+  const impactWeight = newsImpactWeight(ageHours);
+  return { ...n, ageHours: Math.round(ageHours), impactWeight, isStale: impactWeight === 0 };
+}
+
 function decodeHtml(s: string): string {
   return s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
@@ -74,7 +92,7 @@ async function fetchYahooNews(query: string): Promise<NewsItem[]> {
     const news = data?.news || [];
     return news.map((n: any) => {
       const s = scoreSentiment(n.title || "");
-      return {
+      return enrich({
         title: n.title,
         link: n.link,
         source: n.publisher || "Yahoo Finance",
@@ -83,7 +101,7 @@ async function fetchYahooNews(query: string): Promise<NewsItem[]> {
         sentimentScore: s,
         thumbnail: n.thumbnail?.resolutions?.find((r: any) => r.width <= 200)?.url || n.thumbnail?.resolutions?.[0]?.url,
         origin: "Yahoo Finance" as const
-      };
+      });
     });
   } catch {
     return [];
@@ -105,7 +123,7 @@ async function fetchGoogleNews(query: string, lang: "pt-PT" | "pt-BR" | "en-US")
       const source = decodeHtml((raw.match(/<source[^>]*>([\s\S]*?)<\/source>/) || [])[1] || "Google Notícias");
       const cleanTitle = title.replace(/\s-\s[^-]+$/, "");
       const s = scoreSentiment(cleanTitle);
-      return {
+      return enrich({
         title: cleanTitle,
         link,
         source,
@@ -113,7 +131,7 @@ async function fetchGoogleNews(query: string, lang: "pt-PT" | "pt-BR" | "en-US")
         sentiment: s > 0.15 ? "POSITIVA" : s < -0.15 ? "NEGATIVA" : "NEUTRA",
         sentimentScore: s,
         origin: "Google Notícias" as const
-      } as NewsItem;
+      });
     }).filter(n => n.title && n.link);
   } catch {
     return [];
@@ -149,29 +167,30 @@ export async function fetchStockNews(symbol: string, companyName?: string): Prom
   merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
   const items = merged.slice(0, 14);
 
-  const positive = items.filter(i => i.sentiment === "POSITIVA").length;
-  const negative = items.filter(i => i.sentiment === "NEGATIVA").length;
-  const neutral = items.length - positive - negative;
+  // Só notícias das últimas 72h têm impacto; as restantes ficam listadas como contexto (peso 0)
+  const fresh = items.filter(i => i.impactWeight > 0);
+  const positive = fresh.filter(i => i.sentiment === "POSITIVA").length;
+  const negative = fresh.filter(i => i.sentiment === "NEGATIVA").length;
+  const neutral = fresh.length - positive - negative;
 
-  // Recency-weighted score
-  const now = Date.now();
   let weighted = 0;
   let weightSum = 0;
-  for (const i of items) {
-    const ageDays = Math.max(0, (now - new Date(i.publishedAt).getTime()) / 86400000);
-    const w = 1 / (1 + ageDays / 7);
-    weighted += i.sentimentScore * w;
-    weightSum += w;
+  for (const i of fresh) {
+    weighted += i.sentimentScore * i.impactWeight;
+    weightSum += i.impactWeight;
   }
   const score = weightSum > 0 ? Math.round((weighted / weightSum) * 100) : 0;
 
   let label: NewsSentimentSummary["label"] = "Fluxo Noticioso Neutro";
-  if (score >= 40) label = "Fluxo Noticioso Muito Positivo";
+  if (fresh.length === 0) label = "Sem Notícias Recentes (72h) com Impacto";
+  else if (score >= 40) label = "Fluxo Noticioso Muito Positivo";
   else if (score >= 12) label = "Fluxo Noticioso Positivo";
   else if (score <= -40) label = "Fluxo Noticioso Muito Negativo";
   else if (score <= -12) label = "Fluxo Noticioso Negativo";
 
-  const scoreImpact = Math.max(-8, Math.min(8, Math.round(score / 12)));
+  // Impacto cresce com o número de notícias frescas (1 notícia isolada pesa pouco)
+  const coverage = Math.min(1, fresh.length / 4);
+  const scoreImpact = fresh.length === 0 ? 0 : Math.max(-8, Math.min(8, Math.round((score / 12) * coverage)));
 
-  return { items, positive, negative, neutral, score, label, scoreImpact };
+  return { items, positive, negative, neutral, score, freshCount: fresh.length, staleCount: items.length - fresh.length, label, scoreImpact };
 }

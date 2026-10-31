@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { StockFullAnalysis } from "@/lib/stockApi";
 import { StockChart } from "./StockChart";
 import { StockNews } from "./StockNews";
+import { ScenarioPanel } from "./ScenarioPanel";
 import {
   TrendingUp,
   TrendingDown,
@@ -279,7 +280,7 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
               {expectation.overallScore}<span className="text-sm text-slate-400">/100</span>
             </div>
             <p className="mt-1 text-[11px] text-slate-400">
-              60% Técnico + 40% Fundamental + Sentimento de Notícias
+              Técnico + Fundamental + Notícias ≤72h + Monte Carlo + Backtest ({stock.scenario.validation.grade})
             </p>
           </div>
         </div>
@@ -376,6 +377,11 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
       {/* INTERACTIVE CANDLESTICK / PRICE CHART                   */}
       {/* ======================================================== */}
       <StockChart history={stock.history} symbol={stock.symbol} currency={stock.currency} />
+
+      {/* ======================================================== */}
+      {/* CENÁRIOS, MONTE CARLO, BACKTEST E VALIDAÇÃO              */}
+      {/* ======================================================== */}
+      <ScenarioPanel scenario={stock.scenario} currency={stock.currency} />
 
       {/* ======================================================== */}
       {/* NOTÍCIAS ASSOCIADAS À AÇÃO                               */}
