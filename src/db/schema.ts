@@ -40,3 +40,13 @@ export const stockAlerts = pgTable("stock_alerts", {
   isTriggered: boolean("is_triggered").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const uploads = pgTable("uploads", {
+  id: serial("id").primaryKey(),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type").notNull(),
+  sizeBytes: doublePrecision("size_bytes").notNull(),
+  note: text("note"),
+  dataBase64: text("data_base64").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

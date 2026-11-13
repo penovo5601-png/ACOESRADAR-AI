@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Search, TrendingUp, Camera, Globe, Bookmark, Calculator, Sparkles, Activity } from "lucide-react";
+import { Search, TrendingUp, Camera, Globe, Bookmark, Calculator, Sparkles, Activity, Briefcase } from "lucide-react";
 import { StockDirectoryItem } from "@/data/globalStocks";
 
 interface HeaderNavProps {
-  activeTab: "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator";
-  setActiveTab: (tab: "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator") => void;
+  activeTab: "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator" | "portfolio";
+  setActiveTab: (tab: "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator" | "portfolio") => void;
   onSearchSelect: (symbol: string) => void;
   currentSymbol: string;
 }
@@ -210,6 +210,18 @@ export function HeaderNav({ activeTab, setActiveTab, onSearchSelect, currentSymb
               LINK DEDICADO
             </span>
           </a>
+
+          <button
+            onClick={() => setActiveTab("portfolio")}
+            className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+              activeTab === "portfolio"
+                ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30"
+                : "text-slate-300 hover:text-white hover:bg-slate-800/60"
+            }`}
+          >
+            <Briefcase className="h-4 w-4" />
+            <span>Carteiras 100k</span>
+          </button>
 
           <button
             onClick={() => setActiveTab("market-explorer")}

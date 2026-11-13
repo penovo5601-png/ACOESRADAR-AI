@@ -6,6 +6,7 @@ import { StockChart } from "./StockChart";
 import { StockNews } from "./StockNews";
 import { ScenarioPanel } from "./ScenarioPanel";
 import { FundamentalsPanel } from "./FundamentalsPanel";
+import { GuidePanel } from "./GuidePanel";
 import {
   TrendingUp,
   TrendingDown,
@@ -34,7 +35,7 @@ interface StockDetailViewProps {
 
 export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false }: StockDetailViewProps) {
   const [added, setAdded] = useState(isWatchlisted);
-  const [activeTab, setActiveTab] = useState<"overview" | "technical" | "fundamental">("overview");
+  const [activeTab, setActiveTab] = useState<"guide" | "overview" | "technical" | "fundamental">("guide");
 
   const { expectation, technical, fundamental } = stock;
   const isUp = stock.change >= 0;
@@ -261,6 +262,9 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
             <span className="mx-2 text-slate-600">|</span>
             <span className="text-rose-400 font-black">▼ {technical.signalsBearish} a favor da queda</span>
           </span>
+          <span className={`rounded-lg border px-2 py-0.5 font-black ${stock.guide.semaforo.decisionLight === "VERDE" ? "border-emerald-700 bg-emerald-950 text-emerald-300" : stock.guide.semaforo.decisionLight === "VERMELHO" ? "border-rose-700 bg-rose-950 text-rose-300" : "border-amber-700 bg-amber-950 text-amber-300"}`}>
+            Semáforo do guia: {stock.guide.semaforo.decision} ({stock.guide.semaforo.greens}🟢 {stock.guide.semaforo.yellows}🟡 {stock.guide.semaforo.reds}🔴) · Tendência 6M {stock.guide.trend.label}
+          </span>
           <span className={`font-bold ${stock.news.scoreImpact > 0 ? "text-emerald-400" : stock.news.scoreImpact < 0 ? "text-rose-400" : "text-slate-400"}`}>
             Notícias: {stock.news.label} ({stock.news.scoreImpact > 0 ? "+" : ""}{stock.news.scoreImpact} pts)
           </span>
@@ -412,7 +416,15 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
       <StockNews news={stock.news} symbol={stock.symbol} />
 
       {/* Navigation tabs for Technical vs Fundamental */}
-      <div className="flex border-b border-slate-800">
+      <div className="flex flex-wrap border-b border-slate-800">
+        <button
+          onClick={() => setActiveTab("guide")}
+          className={`px-5 py-3 text-sm font-semibold transition border-b-2 ${
+            activeTab === "guide" ? "border-amber-500 text-amber-400" : "border-transparent text-slate-400 hover:text-white"
+          }`}
+        >
+          📘 Método do Guia (semáforo + concorrentes)
+        </button>
         <button
           onClick={() => setActiveTab("overview")}
           className={`px-5 py-3 text-sm font-semibold transition border-b-2 ${
@@ -434,6 +446,9 @@ export function StockDetailView({ stock, onAddToWatchlist, isWatchlisted = false
           Fundamentais: Rentabilidade · Crescimento · Balanço · Valor Intrínseco
         </button>
       </div>
+
+      {/* TAB 0: MÉTODO DO GUIA */}
+      {activeTab === "guide" && <GuidePanel g={stock.guide} symbol={stock.symbol} currency={stock.currency} />}
 
       {/* TAB 1: TECHNICAL INDICATORS MATRIX */}
       {activeTab === "overview" && (

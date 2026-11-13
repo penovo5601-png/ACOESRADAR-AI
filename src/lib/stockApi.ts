@@ -5,6 +5,8 @@ import { runScenarioEngine, ScenarioResult } from "./scenarios";
 import { getCandles } from "./candles";
 import { fetchTradingViewFundamentals } from "./tradingview";
 import { buildFundamentalReport, FundamentalReport } from "./fundamentals";
+import { buildGuideAnalysis, GuideAnalysis } from "./guide";
+import { fetchPeers } from "./peers";
 
 export interface StockFullAnalysis {
   symbol: string;
@@ -32,6 +34,7 @@ export interface StockFullAnalysis {
   news: NewsSentimentSummary;
   scenario: ScenarioResult;
   fundamentalReport: FundamentalReport;
+  guide: GuideAnalysis;
   candleSource: string;
   dataNotes: string[];
   lastUpdated: string;
@@ -86,6 +89,22 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
   const fundamental = fundamentalReport.available
     ? fundamentalFromReport(fundamentalReport)
     : generateFundamentalData(cleanSymbol, technical.currentPrice, dirMatch?.sector);
+
+  // Concorrentes reais (mesma indústria/região) para o método do guia
+  const tvIndustry = tv?.industry ? String(tv.industry) : null;
+  const tvSector = tv?.sector ? String(tv.sector) : null;
+  const tvCountry = (tv as any)?.country ? String((tv as any).country) : null;
+  const peers = await fetchPeers(tv?.__tv ?? null, tvIndustry, tvSector, tvCountry).catch(() => []);
+  const gf = (label: string) => {
+    const all = [...fundamentalReport.valuation.items, ...fundamentalReport.profitability.items, ...fundamentalReport.dividends.items];
+    return all.find(i => i.label.startsWith(label))?.raw ?? null;
+  };
+  const guide = buildGuideAnalysis({
+    symbol: cleanSymbol, name: dirMatch?.name || metaName || cleanSymbol, price: technical.currentPrice, currency: metaCurrency,
+    candles: history.map(h => ({ t: new Date(h.date).getTime(), o: h.open, h: h.high, l: h.low, c: h.close, v: h.volume })),
+    fundamentals: { per: gf("P/E"), pbv: gf("P/B"), roe: gf("ROE"), dy: gf("Dividend yield"), payout: gf("Payout") },
+    peers, sector: fundamentalReport.sector,
+  });
 
   // Notícias associadas + sentimento
   const resolvedName = dirMatch?.name || metaName || cleanSymbol;
@@ -148,6 +167,7 @@ export async function fetchStockData(symbol: string): Promise<StockFullAnalysis>
     news,
     scenario,
     fundamentalReport,
+    guide,
     candleSource: syntheticHistory ? "sintética" : cr.source,
     dataNotes,
     lastUpdated: new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })

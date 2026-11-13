@@ -7,6 +7,7 @@ import { ChartPhotoAnalyzer } from "@/components/ChartPhotoAnalyzer";
 import { MarketExplorer } from "@/components/MarketExplorer";
 import { WatchlistView } from "@/components/WatchlistView";
 import { ValuationCalculator } from "@/components/ValuationCalculator";
+import { PortfolioBuilder } from "@/components/PortfolioBuilder";
 import { StockFullAnalysis } from "@/lib/stockApi";
 import {
   TrendingUp,
@@ -24,7 +25,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator"
+    "stock" | "chart-photo" | "market-explorer" | "watchlist" | "calculator" | "portfolio"
   >("stock");
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
 
@@ -198,6 +199,9 @@ export default function HomePage() {
         {activeTab === "watchlist" && (
           <WatchlistView onSelectStock={handleSelectStock} />
         )}
+
+        {/* Tab 6: Carteiras até 100k */}
+        {activeTab === "portfolio" && <PortfolioBuilder onSelectStock={handleSelectStock} />}
 
         {/* Tab 5: Valuation DCF Calculator */}
         {activeTab === "calculator" && <ValuationCalculator />}

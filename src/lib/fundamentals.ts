@@ -5,7 +5,7 @@
  */
 
 export const FUNDAMENTAL_COLUMNS = [
-  "close", "currency", "fundamental_currency_code", "sector", "industry", "description", "market_cap_basic", "beta_1_year", "number_of_employees",
+  "close", "currency", "fundamental_currency_code", "country", "sector", "industry", "description", "market_cap_basic", "beta_1_year", "number_of_employees",
   "Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y", "Perf.3Y", "Perf.5Y", "Perf.10Y",
   "return_on_equity", "return_on_assets", "return_on_invested_capital", "gross_margin", "operating_margin", "net_margin", "free_cash_flow_margin_ttm", "free_cash_flow_ttm",
   "earnings_per_share_basic_ttm", "earnings_per_share_diluted_ttm", "revenue_per_share_ttm", "book_value_per_share_fq",
