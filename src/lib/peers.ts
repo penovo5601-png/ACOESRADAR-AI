@@ -1,7 +1,7 @@
 import { PeerRow } from "./guide";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-export const PEER_COLUMNS = ["name", "description", "exchange", "country", "close", "currency", "price_earnings_ttm", "price_book_fq", "return_on_equity", "dividends_yield", "dividend_payout_ratio_ttm", "Perf.6M", "Perf.Y", "market_cap_basic", "sector", "industry", "beta_1_year", "price_target_average", "Perf.1M", "Perf.3M", "debt_to_equity", "total_revenue_yoy_growth_ttm", "earnings_per_share_diluted_yoy_growth_ttm", "net_margin", "Volatility.M", "fundamental_currency_code", "total_shares_outstanding_fundamental"] as const;
+export const PEER_COLUMNS = ["name", "description", "exchange", "country", "close", "currency", "price_earnings_ttm", "price_book_fq", "return_on_equity", "dividends_yield", "dividend_payout_ratio_ttm", "Perf.6M", "Perf.Y", "market_cap_basic", "sector", "industry", "beta_1_year", "price_target_average", "Perf.1M", "Perf.3M", "debt_to_equity", "total_revenue_yoy_growth_ttm", "earnings_per_share_diluted_yoy_growth_ttm", "net_margin", "Volatility.M", "fundamental_currency_code", "total_shares_outstanding_fundamental", "RSI", "ADX", "MACD.macd", "MACD.signal", "SMA20", "SMA50", "price_52_week_high", "price_52_week_low", "Recommend.All", "relative_volume_10d_calc", "earnings_release_next_date", "eps_surprise_percent_fq", "recommendation_mark", "Perf.W", "Perf.YTD", "average_volume_10d_calc", "high_1M", "low_1M"] as const;
 
 export const TV_TO_YAHOO_SUFFIX: Record<string, string> = { EURONEXT: "", BME: ".MC", XETR: ".DE", FWB: ".F", MIL: ".MI", LSE: ".L", SIX: ".SW", OMXSTO: ".ST", STO: ".ST", OSL: ".OL", OSE: ".OL", OMXCOP: ".CO", CPH: ".CO", OMXHEL: ".HE", HEL: ".HE", ATHEX: ".AT", VIE: ".VI", GPW: ".WA", NASDAQ: "", NYSE: "", AMEX: "", BMFBOVESPA: ".SA", TSE: ".T", HKEX: ".HK", TSX: ".TO", ASX: ".AX", NSE: ".NS", KRX: ".KS", TWSE: ".TW", SSE: ".SS", SZSE: ".SZ" };
 const EURONEXT_COUNTRY_SUFFIX: Record<string, string> = { Portugal: ".LS", France: ".PA", Netherlands: ".AS", Belgium: ".BR", Ireland: ".IR", Norway: ".OL" };
@@ -16,7 +16,8 @@ export function tvToYahoo(tv: string, country: string): string {
   return tk.replace(/\./g, "-") + suf;
 }
 
-export function rowToPeer(s: string, d: (number | string | null)[], selfTv?: string): PeerRow & { tv: string; sector: string | null; industry: string | null; beta: number | null; analystTarget: number | null; perf1m: number | null; perf3m: number | null; de: number | null; revG: number | null; epsG: number | null; nm: number | null; volM: number | null; fccy: string | null; shares: number | null } {
+export type UniverseRow = PeerRow & { tv: string; sector: string | null; industry: string | null; beta: number | null; analystTarget: number | null; perf1m: number | null; perf3m: number | null; de: number | null; revG: number | null; epsG: number | null; nm: number | null; volM: number | null; fccy: string | null; shares: number | null; rsi: number | null; adx: number | null; macd: number | null; macdSignal: number | null; sma20: number | null; sma50: number | null; high52: number | null; low52: number | null; tvRec: number | null; relVol: number | null; nextEarnings: number | null; epsSurprise: number | null; recMark: number | null; perf1w: number | null; perfYtd: number | null; avgVol: number | null; high1m: number | null; low1m: number | null };
+export function rowToPeer(s: string, d: (number | string | null)[], selfTv?: string): UniverseRow {
   const g = (i: number) => (typeof d[i] === "number" && isFinite(d[i] as number) ? (d[i] as number) : null);
   const country = String(d[3] ?? "");
   // Fundamentais do TV vêm em USD: converter PER/PBV/ROE não precisa (rácios); alvo de analistas precisa (por ação)
@@ -24,6 +25,7 @@ export function rowToPeer(s: string, d: (number | string | null)[], selfTv?: str
     tv: s, symbol: tvToYahoo(s, country), name: String(d[1] ?? d[0] ?? s), country, exchange: String(d[2] ?? ""), price: g(4), currency: d[5] ? String(d[5]) : null,
     per: g(6), pbv: g(7), roe: g(8), dy: g(9), payout: g(10), perf6m: g(11), perf1y: g(12), marketCap: g(13), sector: d[14] ? String(d[14]) : null, industry: d[15] ? String(d[15]) : null,
     beta: g(16), analystTarget: g(17), perf1m: g(18), perf3m: g(19), de: g(20), revG: g(21), epsG: g(22), nm: g(23), volM: g(24), fccy: d[25] ? String(d[25]) : null, shares: g(26), isSelf: selfTv === s,
+    rsi: g(27), adx: g(28), macd: g(29), macdSignal: g(30), sma20: g(31), sma50: g(32), high52: g(33), low52: g(34), tvRec: g(35), relVol: g(36), nextEarnings: g(37), epsSurprise: g(38), recMark: g(39), perf1w: g(40), perfYtd: g(41), avgVol: g(42), high1m: g(43), low1m: g(44),
   };
 }
 
@@ -56,7 +58,7 @@ export async function fetchPeers(selfTv: string | null, industry: string | null,
 }
 
 /** Universo para carteiras: ações líquidas da Zona Euro (sem FX), por setor, com fundamentais. */
-export async function fetchEuroUniverse(): Promise<ReturnType<typeof rowToPeer>[]> {
+export async function fetchEuroUniverse(): Promise<UniverseRow[]> {
   const rows = await scan({
     filter: [
       { left: "type", operation: "equal", right: "stock" }, { left: "is_primary", operation: "equal", right: true },
@@ -64,9 +66,8 @@ export async function fetchEuroUniverse(): Promise<ReturnType<typeof rowToPeer>[
       { left: "country", operation: "in_range", right: ["Portugal", "Spain", "France", "Italy", "Germany", "Netherlands", "Belgium", "Austria", "Ireland", "Finland"] },
       { left: "market_cap_basic", operation: "greater", right: 2_000_000_000 },
       { left: "average_volume_10d_calc", operation: "greater", right: 100_000 },
-      { left: "price_earnings_ttm", operation: "greater", right: 0 },
     ],
-    columns: PEER_COLUMNS, sort: { sortBy: "market_cap_basic", sortOrder: "desc" }, range: [0, 220],
+    columns: PEER_COLUMNS, sort: { sortBy: "market_cap_basic", sortOrder: "desc" }, range: [0, 300],
   });
   return rows.map(r => rowToPeer(r.s, r.d));
 }
