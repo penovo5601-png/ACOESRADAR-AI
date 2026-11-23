@@ -42,8 +42,74 @@ export async function analyzeChartImage(
     }
   }
 
-  // Built-in intelligent algorithmic computer vision & chart pattern extraction engine
-  return runAlgorithmicChartAnalysis(imageBase64, symbolHint);
+  // Leitor real de píxeis: reconstrói a série de preços a partir da imagem e lê tendência, velas, níveis e padrões
+  try {
+    return await runPixelChartAnalysis(imageBase64, symbolHint);
+  } catch (err) {
+    console.error("Pixel chart analysis failed:", err);
+    const fallback = runAlgorithmicChartAnalysis(imageBase64, symbolHint);
+    fallback.detailedRationale = "⚠️ Não foi possível descodificar os píxeis desta imagem (formato não suportado ou gráfico ilegível). Esta leitura é apenas indicativa — tenta um print nítido com fundo uniforme. " + fallback.detailedRationale;
+    fallback.confidence = Math.min(fallback.confidence, 40);
+    return fallback;
+  }
+}
+
+async function runPixelChartAnalysis(imageBase64: string, symbolHint?: string): Promise<ChartAnalysisResult> {
+  const { analyzeChartImage: readPixels } = await import("./chart-image");
+  const b64 = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+  const buf = Buffer.from(b64, "base64");
+  const r = await readPixels(buf, symbolHint ? `${symbolHint}.png` : "grafico.png");
+  const m = r.metrics;
+  const up = r.verdict === "SUBIR";
+  const neutral = r.verdict === "NEUTRO";
+  // Padrão: derivado de métricas reais
+  let pattern = "Estrutura de tendência", patternDesc = r.headline;
+  const recent = m.recentSlopePct, early = m.earlySlopePct;
+  if (m.trendR2 > 0.7 && m.trendSlopePct > 0) { pattern = "Canal ascendente (mínimos e máximos cada vez mais altos)"; patternDesc = "Linha de tendência por baixo dos mínimos com ajuste elevado (R² " + m.trendR2.toFixed(2) + "): tendência bullish confirmada."; }
+  else if (m.trendR2 > 0.7 && m.trendSlopePct < 0) { pattern = "Canal descendente (máximos e mínimos cada vez mais baixos)"; patternDesc = "Linha de tendência por cima dos máximos com ajuste elevado (R² " + m.trendR2.toFixed(2) + "): tendência bearish confirmada."; }
+  else if (early > 8 && Math.abs(recent) < 4) { pattern = "Flag / consolidação após impulso"; patternDesc = "Subida forte seguida de pausa curta: a subida tende a continuar se romper o topo da consolidação."; }
+  else if (early < -8 && Math.abs(recent) < 4) { pattern = "Consolidação após queda (possível fundo)"; patternDesc = "Queda seguida de lateralização: só há sinal de compra com quebra da resistência da consolidação."; }
+  else if (m.dropFromHighPct > 12 && recent > 6) { pattern = "Reversão em V / double bottom"; patternDesc = "Queda acentuada seguida de recuperação forte: reversão para cima em curso."; }
+  else if (m.rallyFromLowPct > 12 && recent < -6) { pattern = "Topo / double top"; patternDesc = "Subida acentuada seguida de recuo forte: reversão para baixo em curso."; }
+  else if (m.volatilityPct < 3 && Math.abs(m.trendSlopePct) < 5) { pattern = "Retângulo (lateral entre piso e teto)"; patternDesc = "Preço a oscilar entre suporte e resistência; a quebra do teto é sinal de compra, do chão é sinal de venda."; }
+  const res = m.levels.filter(l => l.kind === "resistência").sort((a, b) => a.price - b.price)[0];
+  const sup = m.levels.filter(l => l.kind === "suporte").sort((a, b) => b.price - a.price)[0];
+  const pos = m.positionInRange; // 0..100 escala normalizada
+  const lvl = (v: number | undefined, d: string) => (v == null ? d : `${v.toFixed(0)}/100 da escala do gráfico`);
+  return {
+    verdict: up ? "SOBE" : "DESCE",
+    verdictLabel: neutral ? "INDEFINIDO / LATERAL — AGUARDAR CONFIRMAÇÃO" : up ? "EXPECTATIVA DE SUBIDA (LEITURA REAL DA IMAGEM)" : "EXPECTATIVA DE QUEDA (LEITURA REAL DA IMAGEM)",
+    verdictEmoji: neutral ? "⚖️" : up ? "🚀" : "📉",
+    verdictBadgeColor: neutral ? "amber" : up ? "emerald" : "rose",
+    confidence: Math.round(r.confidence),
+    trend: neutral ? "CONSOLIDAÇÃO / LATERAL" : up ? "TENDÊNCIA DE ALTA (BULLISH)" : "TENDÊNCIA DE BAIXA (BEARISH)",
+    patternDetected: pattern,
+    patternDescription: patternDesc,
+    candlestickFormation: m.chartType === "velas" ? `${Math.round(m.greenShareRecent * 100)}% de velas verdes no terço final (${Math.round(m.greenRatio * 100)}% no total) — ${m.greenShareRecent > 0.6 ? "compradores dominam" : m.greenShareRecent < 0.4 ? "vendedores dominam" : "indecisão"}.` : m.chartType === "linha" ? "Gráfico de linha: sem velas para ler; leitura baseada na trajetória do preço." : "Tipo de gráfico indefinido.",
+    visibleIndicators: [
+      `Tendência global ${m.trendSlopePct > 0 ? "+" : ""}${m.trendSlopePct.toFixed(1)} (escala normalizada) com R² ${m.trendR2.toFixed(2)}`,
+      `Terço final: ${recent > 0 ? "+" : ""}${recent.toFixed(1)} · terço inicial: ${early > 0 ? "+" : ""}${early.toFixed(1)}`,
+      `Último ponto a ${pos.toFixed(0)}% do intervalo visível · volatilidade ${m.volatilityPct.toFixed(1)} · drawdown máx. ${m.maxDrawdownPct.toFixed(1)}`,
+      ...r.signals.slice(0, 4).map(s => `${s.name}: ${s.value} — ${s.detail}`),
+    ],
+    keyLevels: {
+      entryPrice: up ? `Recuo até ${lvl(sup?.price, "o suporte mais próximo")}` : `Ressalto até ${lvl(res?.price, "a resistência mais próxima")}`,
+      stopLoss: up ? `Abaixo de ${lvl(sup?.price, "o último mínimo")} (5–8% do preço de compra)` : `Acima de ${lvl(res?.price, "o último máximo")}`,
+      takeProfit1: up ? `${lvl(res?.price, "a resistência")} (+8%)` : `${lvl(sup?.price, "o suporte")} (−8%)`,
+      takeProfit2: up ? "Máximo do gráfico / +10%" : "Mínimo do gráfico / −10%",
+      riskRewardRatio: "≈ 1:1.5–2 (stop 5–8% · objetivo 8–10%, regra do guia)",
+    },
+    technicalSignals: {
+      priceAction: r.rationale[0] ?? r.headline,
+      momentum: r.rationale[1] ?? `Pontuação ${r.score > 0 ? "+" : ""}${r.score}/100 · probabilidade de subida ${r.probabilityUp}%`,
+      volumeProfile: r.qualityWarnings.length ? "Avisos de qualidade: " + r.qualityWarnings.join("; ") : "Imagem legível; sem avisos de qualidade.",
+    },
+    tradingPlan: up
+      ? `Comprar de preferência num recuo à linha de tendência/suporte; stop loss 5–8% abaixo (ou sob o suporte); realizar metade a +8% e o resto a +10% ou na resistência. ${r.risks[0] ?? ""}`
+      : `Não comprar (ou vender se já tem). Só reconsiderar com quebra da resistência e MACD/RSI a confirmar. ${r.risks[0] ?? ""}`,
+    detailedRationale: `${r.summary} ${r.rationale.slice(0, 3).join(" ")} Nota: os níveis são dados na escala normalizada do gráfico (0–100) porque a imagem não contém o eixo de preços legível; se indicares o ticker, cruzamos com as cotações reais.`,
+    source: "PATTERN_ENGINE",
+  };
 }
 
 async function callOpenAiVision(
