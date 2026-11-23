@@ -1,11 +1,15 @@
 import { fetchEuroUniverse, type UniverseRow } from "./peers";
-import { expectedReturn12m } from "./guide";
+import { expectedReturn12m, buildGuideAnalysis } from "./guide";
+import { getCandles } from "./candles";
 
 type U = UniverseRow;
 export type PortfolioProfile = "TATICA" | "CONSERVADORA" | "EQUILIBRADA" | "CRESCIMENTO";
 
 export interface Thesis { believe: string[]; catalysts: string[]; exit: string[]; risks: string[]; semaforo: { fundamentals: "V" | "A" | "R"; trend: "V" | "A" | "R"; levels: "V" | "A" | "R"; mas: "V" | "A" | "R"; oscillator: "V" | "A" | "R"; greens: number; reds: number; decision: string } }
+export interface CandleVerification { ok: boolean; trend: string; contacts: number; confirmed: boolean; situation: string; greens: number; reds: number; decision: string; support: number; resistance: number; candleSource: string; note: string }
 export interface Holding {
+  verification?: CandleVerification;
+  probPositivePct: number;
   symbol: string; tv: string; name: string; country: string; sector: string; industry: string; price: number; currency: string;
   weightPct: number; amount: number; shares: number; invested: number;
   expectedReturnPct: number; expectedLow: number; expectedHigh: number; expectedGain: number; // horizonte escolhido
@@ -18,7 +22,8 @@ export interface Holding {
 export interface PortfolioPlan {
   profile: PortfolioProfile; title: string; description: string; budget: number; invested: number; cash: number; horizonMonths: number; targetPct: number;
   holdings: Holding[];
-  expectedReturnPct: number; expectedGain: number; expectedLowPct: number; expectedHighPct: number; expectedVolPct: number; probTargetPct: number; expected12mPct: number; dividendYieldPct: number; beta: number;
+  expectedReturnPct: number; expectedGain: number; expectedLowPct: number; expectedHighPct: number; expectedVolPct: number; probTargetPct: number; probPositivePct: number; expected12mPct: number; dividendYieldPct: number; beta: number;
+  verified: boolean; replaced: string[];
   sectors: { name: string; pct: number }[]; countries: { name: string; pct: number }[];
   rationale: string[]; risks: string[]; managementPlan: string[];
   stressScenarios: { name: string; marketMove: number; portfolioMove: number; value: number }[];
@@ -76,8 +81,8 @@ function scoreStock(u: U, profile: PortfolioProfile): number {
   return valueS * 0.2 + qualityS * 0.2 + incomeS * 0.15 + momS * 0.2 + growthS * 0.15 + safetyS * 0.1;
 }
 
-function selectDiversified(universe: U[], profile: PortfolioProfile, n: number): U[] {
-  const pool = universe.filter(u => u.price && u.price > 0 && u.sector && (profile === "TATICA" ? (u.perf1m ?? -99) > -2 && (u.perf3m ?? -99) > 0 && (u.rsi ?? 60) < 76 && (!u.sma50 || u.price > u.sma50) : (u.per != null && u.per > 0 && u.per < (profile === "CRESCIMENTO" ? 60 : 35) && (u.roe ?? 0) > (profile === "CONSERVADORA" ? 6 : 3) && (profile !== "CONSERVADORA" || (u.beta ?? 1) < 1.25) && (profile !== "CONSERVADORA" || (u.perf1y ?? 0) > -20))));
+function selectDiversified(universe: U[], profile: PortfolioProfile, n: number, exclude: Set<string> = new Set()): U[] {
+  const pool = universe.filter(u => !exclude.has(u.symbol) && u.price && u.price > 0 && u.sector && (profile === "TATICA" ? (u.perf1m ?? -99) > -2 && (u.perf3m ?? -99) > 0 && (u.rsi ?? 60) < 76 && (!u.sma50 || u.price > u.sma50) : (u.per != null && u.per > 0 && u.per < (profile === "CRESCIMENTO" ? 60 : 35) && (u.roe ?? 0) > (profile === "CONSERVADORA" ? 6 : 3) && (profile !== "CONSERVADORA" || (u.beta ?? 1) < 1.25) && (profile !== "CONSERVADORA" || (u.perf1y ?? 0) > -20))));
   const ranked = pool.map(u => ({ u, s: scoreStock(u, profile) })).sort((a, b) => b.s - a.s);
   const picked: U[] = []; const perSector = new Map<string, number>(); const perCountry = new Map<string, number>(); const perIndustry = new Set<string>();
   const maxPerSector = 2, maxPerCountry = Math.ceil(n * 0.4);
@@ -96,9 +101,9 @@ function selectDiversified(universe: U[], profile: PortfolioProfile, n: number):
 
 function L(v: "V" | "A" | "R") { return v; }
 
-export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget: number, horizonMonths = 2, targetPct = 6): PortfolioPlan {
+export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget: number, horizonMonths = 2, targetPct = 6, exclude: Set<string> = new Set()): PortfolioPlan {
   const n = profile === "TATICA" ? 7 : profile === "CONSERVADORA" ? 10 : profile === "CRESCIMENTO" ? 8 : 9;
-  const picks = selectDiversified(universe, profile, n);
+  const picks = selectDiversified(universe, profile, n, exclude);
   const scores = picks.map(u => scoreStock(u, profile));
   const minS = Math.min(...scores), maxS = Math.max(...scores);
   const raw = scores.map(s => 1 + (maxS > minS ? (s - minS) / (maxS - minS) : 0) * (profile === "TATICA" ? 1.0 : 0.8));
@@ -119,6 +124,7 @@ export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget:
     const er12 = expectedReturn12m({ perf1y: u.perf1y, perf6m: u.perf6m, dy: u.dy, per: u.per, roe: u.roe, analystUpside: au, beta: u.beta });
     const eh = expectedHorizon(u, horizonMonths, au);
     const probTarget = r1(100 * (1 - Phi((targetPct - eh.exp) / eh.vol)));
+    const probPositive = r1(100 * (1 - Phi((0 - eh.exp) / eh.vol)));
     const aboveSma20 = !!(u.sma20 && price > u.sma20), aboveSma50 = !!(u.sma50 && price > u.sma50), macdBull = u.macd != null && u.macdSignal != null && u.macd > u.macdSignal;
     const trend: Holding["trend"] = (u.perf6m ?? 0) > 4 && aboveSma50 ? "Bullish" : (u.perf6m ?? 0) < -4 && !aboveSma50 ? "Bearish" : "Lateral";
     const dist52 = u.high52 ? r1((u.high52 / price - 1) * 100) : null;
@@ -184,7 +190,7 @@ export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget:
     return {
       symbol: u.symbol, tv: u.tv, name: u.name, country: countryPt, sector: sectorPt, industry: u.industry ?? "", price, currency: u.currency ?? "EUR",
       weightPct: 0, amount: Math.round(amount), shares, invested: r2(invested),
-      expectedReturnPct: eh.exp, expectedLow: r1(eh.exp - eh.vol), expectedHigh: r1(eh.exp + eh.vol), expectedGain: Math.round(invested * eh.exp / 100), expected12mPct: er12.expected, probTargetPct: probTarget,
+      expectedReturnPct: eh.exp, expectedLow: r1(eh.exp - eh.vol), expectedHigh: r1(eh.exp + eh.vol), expectedGain: Math.round(invested * eh.exp / 100), expected12mPct: er12.expected, probTargetPct: probTarget, probPositivePct: probPositive,
       per: u.per, pbv: u.pbv, roe: u.roe, dy: u.dy, perf1w: u.perf1w, perf1m: u.perf1m, perf3m: u.perf3m, perf6m: u.perf6m, perf1y: u.perf1y, beta: u.beta,
       rsi: u.rsi, adx: u.adx, aboveSma20, aboveSma50, macdBull, distTo52HighPct: dist52, analystUpsidePct: au, consensus, nextEarnings, earningsInHorizon, epsSurprise: u.epsSurprise, relVol: u.relVol,
       sectorMedianPer: secMed, score: Math.round(scores[i]), trend, stopLoss, target, partialTarget, justification, thesis,
@@ -203,6 +209,7 @@ export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget:
   const avgVol = holdings.reduce((a, h, i) => a + (h.expectedHigh - h.expectedReturnPct) * w[i], 0);
   const expectedVolPct = r1(avgVol * Math.sqrt(1 / nH + (1 - 1 / nH) * rho));
   const probTargetPct = r1(100 * (1 - Phi((targetPct - expectedReturnPct) / Math.max(1, expectedVolPct))));
+  const probPositivePct = r1(100 * (1 - Phi((0 - expectedReturnPct) / Math.max(1, expectedVolPct))));
   const sectors = Object.entries(holdings.reduce<Record<string, number>>((m, h) => { m[h.sector] = (m[h.sector] ?? 0) + h.invested; return m; }, {})).map(([name, v]) => ({ name, pct: r1((v / invested) * 100) })).sort((a, b) => b.pct - a.pct);
   const countries = Object.entries(holdings.reduce<Record<string, number>>((m, h) => { m[h.country] = (m[h.country] ?? 0) + h.invested; return m; }, {})).map(([name, v]) => ({ name, pct: r1((v / invested) * 100) })).sort((a, b) => b.pct - a.pct);
   const stressScenarios = [{ name: "Mercado +10%", marketMove: 10 }, { name: "Mercado +5%", marketMove: 5 }, { name: "Mercado 0%", marketMove: 0 }, { name: "Correção −7%", marketMove: -7 }, { name: "Queda −15%", marketMove: -15 }]
@@ -219,7 +226,7 @@ export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget:
     profile === "TATICA"
       ? `Critério de entrada (guia, secção 5–6): todas as posições têm preço acima da MM50, ${holdings.filter(h => h.aboveSma20 && h.macdBull).length} de ${nH} com MM20 e MACD a confirmar, ${holdings.filter(h => h.thesis.semaforo.greens >= 3).length} com ≥3 verdes no semáforo; ${holdings.filter(h => h.earningsInHorizon).length} com resultados dentro do prazo (catalisador).`
       : `Seleção pelo método do guia: PER vs mediana do setor, ROE, dividend yield, tendência de 6 meses e médias móveis; stop loss e objetivo definidos à partida.`,
-    `Rendibilidade esperada em ${horizonMonths} meses: ${pc(expectedReturnPct)} (≈ ${Math.round(invested * expectedReturnPct / 100).toLocaleString("pt-PT")} €); probabilidade estimada de atingir ≥ +${targetPct}% no prazo: ${probTargetPct}%. A 12 meses: ${pc(expected12mPct)}. Dividendos ${dividendYieldPct}%/ano, beta ${beta}.`,
+    `Rendibilidade esperada em ${horizonMonths} meses: ${pc(expectedReturnPct)} (≈ ${Math.round(invested * expectedReturnPct / 100).toLocaleString("pt-PT")} €); probabilidade de retorno POSITIVO: ${probPositivePct}%; de atingir ≥ +${targetPct}%: ${probTargetPct}%. A 12 meses: ${pc(expected12mPct)}. Dividendos ${dividendYieldPct}%/ano, beta ${beta}.`,
     `Caixa residual de ${cash.toLocaleString("pt-PT")} € para comissões e arredondamento de lotes.`,
   ];
   const managementPlan = [
@@ -235,7 +242,7 @@ export function buildPortfolio(universe: U[], profile: PortfolioProfile, budget:
     profile === "TATICA" ? `Um objetivo de +${targetPct}% em ${horizonMonths} meses equivale a ≈ ${r1(targetPct * 12 / horizonMonths)}% anualizado — acima da média histórica das ações (7–9%): a probabilidade estimada é ${probTargetPct}%, não uma garantia. A carteira só funciona com a gestão semanal descrita.` : `Concentração geográfica na Zona Euro: sensível ao BCE e à economia europeia.`,
     `As estimativas usam dados de hoje (TradingView/Yahoo) e momentum passado; resultados, notícias e choques macro podem inverter as tendências em dias.`,
   ];
-  return { profile, title: titles[profile][0], description: titles[profile][1], budget, invested: r2(invested), cash, horizonMonths, targetPct, holdings, expectedReturnPct, expectedGain: Math.round(invested * expectedReturnPct / 100), expectedLowPct: r1(expectedReturnPct - expectedVolPct), expectedHighPct: r1(expectedReturnPct + expectedVolPct), expectedVolPct, probTargetPct, expected12mPct, dividendYieldPct, beta, sectors, countries, rationale, risks, managementPlan, stressScenarios };
+  return { profile, title: titles[profile][0], description: titles[profile][1], budget, invested: r2(invested), cash, horizonMonths, targetPct, holdings, expectedReturnPct, expectedGain: Math.round(invested * expectedReturnPct / 100), expectedLowPct: r1(expectedReturnPct - expectedVolPct), expectedHighPct: r1(expectedReturnPct + expectedVolPct), expectedVolPct, probTargetPct, probPositivePct, expected12mPct, verified: false, replaced: [], dividendYieldPct, beta, sectors, countries, rationale, risks, managementPlan, stressScenarios };
 }
 
 let universeCache: { at: number; data: U[] } | null = null;
@@ -244,5 +251,30 @@ export async function buildAllPortfolios(budget: number, horizonMonths = 2, targ
   if (!universeCache || Date.now() - universeCache.at > 20 * 60 * 1000) { const u = await fetchEuroUniverse(); if (u.length) universeCache = { at: Date.now(), data: u }; }
   const universe = universeCache?.data ?? [];
   const portfolios = (["TATICA", "EQUILIBRADA", "CRESCIMENTO", "CONSERVADORA"] as PortfolioProfile[]).map(p => buildPortfolio(universe, p, b, h, t));
+  // ---- Dupla validação da carteira tática com VELAS REAIS (método do guia) ----
+  try {
+    const exclude = new Set<string>(); const replaced: string[] = [];
+    let plan = portfolios[0];
+    for (let round = 0; round < 3; round++) {
+      const checks = await Promise.all(plan.holdings.map(async (hd) => {
+        const cr = await getCandles(hd.symbol, "1y").catch(() => null);
+        if (!cr || cr.candles.length < 80) return { hd, v: null as CandleVerification | null };
+        const g = buildGuideAnalysis({ symbol: hd.symbol, name: hd.name, price: hd.price, currency: hd.currency, candles: cr.candles, fundamentals: { per: hd.per, pbv: hd.pbv, roe: hd.roe, dy: hd.dy, payout: null }, peers: hd.sectorMedianPer ? [{ symbol: "SETOR", name: "Mediana do setor", country: "—", exchange: "—", price: null, currency: null, per: hd.sectorMedianPer, pbv: null, roe: null, dy: null, payout: null, perf6m: null, perf1y: null, marketCap: 0 }] : [] });
+        const bad = g.semaforo.reds >= 2 || g.trend.kind === "BEARISH" || g.levels.light === "VERMELHO" && g.movingAverages.light !== "VERDE";
+        const v: CandleVerification = { ok: !bad, trend: g.trend.label, contacts: g.trend.contacts, confirmed: g.trend.confirmed, situation: g.levels.situation, greens: g.semaforo.greens, reds: g.semaforo.reds, decision: g.semaforo.decision, support: g.levels.support, resistance: g.levels.resistance, candleSource: cr.source, note: bad ? `Reprovada na verificação com velas (${g.semaforo.reds} vermelhos; tendência ${g.trend.label.toLowerCase()}): substituída.` : `Confirmada com ${cr.candles.length} velas reais: ${g.trend.label.toLowerCase()} (${g.trend.contacts} contactos), ${g.levels.situation.split(" — ")[0].toLowerCase()}, semáforo ${g.semaforo.greens}V/${g.semaforo.reds}R.` };
+        return { hd, v };
+      }));
+      let anyBad = false;
+      for (const { hd, v } of checks) { hd.verification = v ?? undefined; if (v && !v.ok) { exclude.add(hd.symbol); replaced.push(`${hd.name} (${hd.symbol})`); anyBad = true; } }
+      if (!anyBad) break;
+      const prevVer = new Map(plan.holdings.map(x => [x.symbol, x.verification]));
+      plan = buildPortfolio(universe, "TATICA", b, h, t, exclude);
+      for (const x of plan.holdings) if (prevVer.has(x.symbol)) x.verification = prevVer.get(x.symbol);
+    }
+    plan.verified = true; plan.replaced = replaced;
+    if (replaced.length) plan.rationale.splice(3, 0, `Dupla validação com velas reais: ${replaced.length} candidata(s) reprovada(s) e substituída(s) — ${replaced.join(", ")}.`);
+    else plan.rationale.splice(3, 0, `Dupla validação com velas reais: as ${plan.holdings.length} posições passaram no semáforo do guia calculado sobre o histórico OHLC (não só no scanner).`);
+    portfolios[0] = plan;
+  } catch { /* se a verificação falhar, mantém a carteira do scanner */ }
   return { budget: b, horizonMonths: h, targetPct: t, generatedAt: new Date().toISOString(), universeSize: universe.length, portfolios, note: universe.length ? `Universo: ${universe.length} ações da Zona Euro com capitalização > 2 mM€ e liquidez (TradingView, agora).` : "Fornecedor de dados indisponível — tenta novamente dentro de minutos." };
 }
